@@ -1,0 +1,21 @@
+PrimeChain Next repository
+==========================
+
+Purpose:
+  New-chain protocol design and experiments.
+
+Canonical local path:
+  /home/ovanes/primechain-next
+
+Canonical remote:
+  git@github.com:midlincoln/primechain-next.git
+
+Do not use this repository for:
+  - live current-testnet operations;
+  - emergency fixes to the running chain;
+  - validator service changes for /home/ovanes/primes;
+  - shared chain data, wallets, peer state, or systemd units from the old chain.
+
+Before commits or pushes, run:
+  scripts/check-repo-purpose.sh
+
