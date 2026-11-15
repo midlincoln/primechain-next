@@ -29,7 +29,8 @@ We intend to keep the existing testnet alive while developing this repository in
 
 The same physical validator servers may be reused for experiments, but PrimeChain Next services should run on separate ports and separate data directories. The old chain and the new-chain experiments must not share chain data, wallets, peer state, or service units.
 
-Example separation:
+Planned separation (checked against listeners on the three active hosts on
+2026-11-15; Next ports are not reserved or opened yet):
 
 ```text
 current testnet:
@@ -38,12 +39,14 @@ current testnet:
   record sync:          8341
 
 PrimeChain Next experiments:
-  public/status/mining: TBD
-  validator peer:       TBD
-  record sync:          TBD
+  public/status/mining: 9339
+  validator peer:       9340
+  record sync:          9341
 ```
 
-Exact ports will be chosen before deployment.
+See [dual-chain deployment notes](docs/dual-chain-deployment.md) for host checks,
+firewall prerequisites, isolated paths, and pre-launch safety checks. Recheck
+availability before deployment; no Next service is deployed by this plan.
 
 ## Design Goals
 
@@ -51,15 +54,21 @@ PrimeChain Next is focused on reducing protocol bureaucracy while preserving det
 
 Primary goals:
 
-- support batch or range submission instead of one quorum round per integer;
-- reduce validator coordination on the critical path;
-- remove lottery-dependent liveness risks;
-- support larger integer ranges cleanly;
-- define a simpler evidence model for prime and composite verification;
-- keep replay deterministic and auditable;
-- simplify validator admission and removal;
-- define cleaner reserve, reward, and inflation rules;
-- keep bootstrap/snapshot behavior explicit from the start.
+- store one finalized prime-ended block with all intervening composite evidence
+  and credited miner addresses;
+- accept contiguous composite ranges atomically, verifying every member but
+  voting once per range, with durable range receipts and voting locks;
+- limit range size through shared policy, fixed during an open prime block;
+- preserve per-composite reward shares and use a block-level certificate before
+  pruning intermediate range signatures;
+- support larger integers with bounded canonical encodings and checked arithmetic;
+- keep proofs searchable and replay deterministic;
+- preserve validator admission/removal, transaction, fee, reserve, and reward-share
+  behavior unless a specific adaptation is reviewed;
+- measure validator coordination before optimizing it.
+
+An issuance multiplier is a separate economic decision. Polynomial mining and
+broader evidence work remain research plans, not requirements for this launch.
 
 ## Current Chain Migration Principle
 
@@ -79,14 +88,22 @@ The goal is continuity for current miners and holders, not abandoning the existi
 
 ## Initial Work Items
 
-1. Write the range/batch record design.
-2. Define large integer encoding requirements.
-3. Decide whether range records are atomic or partially accepted.
-4. Define reward assignment inside a range.
-5. Define deterministic replay for range records.
-6. Prototype local replay before validator networking changes.
-7. Choose separate experimental ports and service names.
-8. Build a clean migration/snapshot tool for the old chain.
+Start with the [prime-block design](docs/prime-block-design.md) and the
+[offline size/replay experiment](experiments/prime_blocks/README.md).
+The experiment is opt-in and does not change node or network behavior.
+
+An [atomic range/recovery prototype](experiments/prime_blocks/atomic-ranges.md)
+adds a configurable range policy, durable range and closing-block vote locks,
+and an isolated message interface tested over localhost TCP. A separate
+[continuous-chain experiment](experiments/prime_blocks/continuous-chain.md)
+installs successive prime blocks and recovers interrupted interval transitions.
+A [three-process localhost test](experiments/prime_blocks/local-validators.md)
+connects that coordinator to messages and exercises restart, catch-up, and lost
+replies with independent workers. None changes the live node. Subsequent
+milestones cover autonomous peer coordination, larger integer encoding, production
+checkpoint safety, policy voting, and full validator-network integration.
+Network identity/deployment separation
+and a reviewed migration/snapshot policy are required before any public launch.
 
 ## Status
 

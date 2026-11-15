@@ -356,6 +356,53 @@ target_link_libraries(primechain-round-change-tests
 )
 
 enable_testing()
+option(PRIMECHAIN_BUILD_EXPERIMENTS "Build offline PrimeChain Next experiments" OFF)
+if(PRIMECHAIN_BUILD_EXPERIMENTS)
+    add_executable(primechain-prime-block-experiment
+        experiments/prime_blocks/prime_blocks.cpp
+        experiments/prime_blocks/main.cpp
+    )
+    target_link_libraries(primechain-prime-block-experiment PRIVATE primechain_core)
+    target_compile_options(primechain-prime-block-experiment PRIVATE -Wall -Wextra -Wpedantic)
+    add_executable(primechain-atomic-range-tests
+        experiments/prime_blocks/prime_blocks.cpp
+        experiments/prime_blocks/atomic_ranges.cpp
+        experiments/prime_blocks/validator_messages.cpp
+        experiments/prime_blocks/continuous_chain.cpp
+        experiments/prime_blocks/range_tests.cpp
+    )
+    target_link_libraries(primechain-atomic-range-tests PRIVATE primechain_core Threads::Threads)
+    target_compile_options(primechain-atomic-range-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME atomic_range_recovery
+        COMMAND primechain-atomic-range-tests ${CMAKE_CURRENT_BINARY_DIR}/prime-block-experiments)
+    add_executable(primechain-continuous-chain-tests
+        experiments/prime_blocks/prime_blocks.cpp
+        experiments/prime_blocks/atomic_ranges.cpp
+        experiments/prime_blocks/continuous_chain.cpp
+        experiments/prime_blocks/chain_tests.cpp
+    )
+    target_link_libraries(primechain-continuous-chain-tests PRIVATE primechain_core)
+    target_compile_options(primechain-continuous-chain-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME continuous_prime_chain_recovery
+        COMMAND primechain-continuous-chain-tests ${CMAKE_CURRENT_BINARY_DIR}/prime-block-experiments)
+    set_tests_properties(continuous_prime_chain_recovery PROPERTIES TIMEOUT 180)
+    add_executable(primechain-local-validator-tests
+        experiments/prime_blocks/prime_blocks.cpp
+        experiments/prime_blocks/atomic_ranges.cpp
+        experiments/prime_blocks/continuous_chain.cpp
+        experiments/prime_blocks/validator_messages.cpp
+        experiments/prime_blocks/process_tests.cpp
+    )
+    target_link_libraries(primechain-local-validator-tests PRIVATE primechain_core Threads::Threads)
+    target_compile_options(primechain-local-validator-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME local_validator_process_recovery
+        COMMAND primechain-local-validator-tests ${CMAKE_CURRENT_BINARY_DIR}/prime-block-experiments)
+    set_tests_properties(local_validator_process_recovery PROPERTIES TIMEOUT 240)
+    foreach(limit 2 3 100 150)
+        add_test(NAME prime_block_experiment_${limit}
+            COMMAND primechain-prime-block-experiment ${limit} ${CMAKE_CURRENT_BINARY_DIR}/prime-block-experiments)
+    endforeach()
+endif()
 add_test(
     NAME primechain_ops_service_generation
     COMMAND
