@@ -63,6 +63,9 @@ public:
     bool closed() const { return closed_; }
     bool ready() const { return ready_; }
     const RangePolicy& policy() const { return policy_; }
+    std::optional<CompositeRange> pendingRange() const { return locked_; }
+    std::optional<PrimeBlock> pendingBlock() const { return closing_; }
+    std::optional<CompositeRange> receipt(const Hash256& subject) const;
     void failNextWriteForTest(TestWriteFailure point) { failure_ = point; }
 
 private:

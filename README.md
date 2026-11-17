@@ -99,11 +99,20 @@ and an isolated message interface tested over localhost TCP. A separate
 installs successive prime blocks and recovers interrupted interval transitions.
 A [three-process localhost test](experiments/prime_blocks/local-validators.md)
 connects that coordinator to messages and exercises restart, catch-up, and lost
-replies with independent workers. None changes the live node. Subsequent
-milestones cover autonomous peer coordination, larger integer encoding, production
+replies with independent workers. An [autonomous peer test](experiments/prime_blocks/peer-coordination.md)
+adds miner-to-one-validator submissions, peer quorum collection, and durable
+sender-driven delivery/recovery. It remains a bounded, fixed-set, single-round
+localhost experiment. None changes the live node. Subsequent
+milestones cover larger integer encoding, round-change recovery, production
 checkpoint safety, policy voting, and full validator-network integration.
 Network identity/deployment separation
 and a reviewed migration/snapshot policy are required before any public launch.
+
+The [proposal/recovery design](docs/proposal-recovery-design.md) records the next
+decision: trusted crash-fault consensus or a Byzantine-tolerant configuration.
+Offline conflict tests reproduce split locks and conflicting certificates with
+one equivocating signer under the current two-of-three rule. These are known
+boundary counterexamples, not a completed recovery implementation.
 
 ## Status
 

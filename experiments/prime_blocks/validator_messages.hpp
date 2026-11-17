@@ -5,8 +5,18 @@
 
 namespace primechain::experiments {
 
-enum class RequestKind : std::uint64_t { Status, VoteRange, AcceptRange, VoteBlock, SealBlock, ChainStatus, InstallBlock };
-enum class ReplyKind : std::uint64_t { Rejected, Status, Vote, Accepted, AlreadyAccepted, Sealed, RecoveryRequired, Installed, AlreadyInstalled };
+enum class RequestKind : std::uint64_t {
+    Status, VoteRange, AcceptRange, VoteBlock, SealBlock, ChainStatus, InstallBlock,
+    SubmitRange, SubmitBlock, DeliverRange, DeliverBlock
+};
+enum class ReplyKind : std::uint64_t {
+    Rejected, Status, Vote, Accepted, AlreadyAccepted, Sealed, RecoveryRequired, Installed, AlreadyInstalled, Pending
+};
+
+struct ValidatorRequest {
+    RequestKind kind{RequestKind::Status};
+    protocol::Bytes payload;
+};
 
 struct ChainStatus {
     std::uint64_t max_range_members{0};
@@ -25,6 +35,7 @@ struct ValidatorReply {
 };
 
 protocol::Bytes encodeRequest(RequestKind kind, const protocol::Bytes& payload = {});
+bool decodeRequest(const protocol::Bytes& bytes, ValidatorRequest& request, std::string& error);
 protocol::Bytes encodeReply(const ValidatorReply& reply);
 bool decodeReply(const protocol::Bytes& bytes, ValidatorReply& reply, std::string& error);
 bool decodeChainStatus(const protocol::Bytes& bytes, ChainStatus& status, std::string& error);

@@ -141,5 +141,9 @@ recovery and checkpoint boundaries. The coordinator documented in
 blocks and opens new intervals with crash-recovery tests. Journals are retained.
 `experiments/prime_blocks/local-validators.md` connects the coordinator to the
 message handler in three localhost worker processes; the test coordinator still
-drives quorum collection and catch-up. This is not a live-chain converter,
+drives quorum collection and catch-up. The follow-up
+`experiments/prime_blocks/peer-coordination.md` adds autonomous quorum collection
+and durable sender-driven delivery retries inside those workers. It retains
+fixed-set, single-round assumptions; conflicting proposals can stall, and general
+peer-pull sync and authenticated transport are not implemented. This is not a live-chain converter,
 production daemon, or complete network consensus implementation.

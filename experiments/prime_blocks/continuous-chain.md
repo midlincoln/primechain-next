@@ -109,9 +109,10 @@ independently replays compact block files without consulting range journals.
   installed blocks in this experiment. This is not a production storage engine.
 - The continuous coordinator now has a message-handler overload and an isolated
   [three-process localhost test](local-validators.md). The harness collects votes
-  and delivers retained receipts explicitly. Autonomous validator networking,
-  peer catch-up, timeout/round-change recovery, and public-endpoint hardening
-  remain ahead; this is not a production daemon.
+  and delivers retained receipts explicitly. The follow-up
+  [autonomous peer test](peer-coordination.md) adds worker-driven quorum collection
+  and retained-outbox delivery retries. General peer-pull sync, timeout/round-change
+  recovery, and public-endpoint hardening remain ahead; this is not a production daemon.
 - Fixed-validator, single-round certificate assumptions are unchanged. This
   milestone is not a new Byzantine consensus proof or liveness guarantee.
 - Transactions, admission/removal, participation accounting, larger integers,

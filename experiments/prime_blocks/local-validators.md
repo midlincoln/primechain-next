@@ -101,9 +101,11 @@ under the requested artifact root; no persistent private-key files are created.
 
 ## Still not ready for deployment
 
-Automatic quorum collection/propagation, peer catch-up, round changes and timeout
-recovery, network authentication, public-endpoint hardening, and unique network
-identity/signature domains remain unresolved. Fixed-validator single-round
+The separate [autonomous peer experiment](peer-coordination.md) now tests quorum
+collection and durable sender-driven delivery/catch-up inside these workers.
+This original test still uses explicit parent coordination. General peer-pull
+sync, round changes and timeout recovery, network authentication, public-endpoint
+hardening, and unique network identity/signature domains remain unresolved. Fixed-validator single-round
 assumptions are unchanged; passing these tests is not a Byzantine safety or
 liveness proof. Journals are retained, not pruned. Transactions, governance,
 larger integers, and policy voting are not added by this milestone.

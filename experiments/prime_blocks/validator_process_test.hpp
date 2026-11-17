@@ -10,20 +10,37 @@
 
 #include "chain_test_fixtures.hpp"
 #include "loopback_test.hpp"
+#include "peer_coordinator.hpp"
 
 namespace primechain::experiments::process_test {
 using namespace test_support;
-constexpr std::array<std::uint8_t, 8> kStartupMagic{'P', 'C', 'N', 'X', 'P', 'W', '0', '1'};
+constexpr std::array<std::uint8_t, 8> kStartupMagic{'P', 'C', 'N', 'X', 'P', 'W', '0', '2'};
 
 inline void blob(protocol::Bytes& out, const protocol::Bytes& value) {
     appendWord(out, value.size());
     out.insert(out.end(), value.begin(), value.end());
 }
 
+inline std::optional<ValidatorReply> peerExchange(const LocalPeer& peer, const protocol::Bytes& request) {
+    try {
+        test::Socket socket_fd(socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0), 1);
+        sockaddr_in endpoint{};
+        endpoint.sin_family = AF_INET;
+        endpoint.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        endpoint.sin_port = htons(peer.port);
+        if (connect(socket_fd.fd(), reinterpret_cast<sockaddr*>(&endpoint), sizeof(endpoint)) != 0) return std::nullopt;
+        test::sendFrame(socket_fd.fd(), request);
+        ValidatorReply reply;
+        std::string error;
+        if (!decodeReply(test::receiveFrame(socket_fd.fd()), reply, error)) return std::nullopt;
+        return reply;
+    } catch (...) { return std::nullopt; }
+}
+
 // This entry point is reachable only through a private inherited control socket.
 // Fault injection and shutdown are deliberately not validator TCP operations.
 inline int workerMain(int control_fd) {
-    test::Socket control(control_fd, 15);
+    test::Socket control(control_fd, 30);
     if (prctl(PR_SET_PDEATHSIG, SIGTERM) != 0 || getppid() == 1)
         throw std::runtime_error("test worker parent unavailable");
     try {
@@ -33,6 +50,7 @@ inline int workerMain(int control_fd) {
         const auto path_bytes = reader.blob(4096);
         const std::string path(path_bytes.begin(), path_bytes.end());
         const bool create = reader.count(1) != 0;
+        const bool autonomous = reader.count(1) != 0;
         RangePolicy policy{reader.integer()};
         crypto::SignatureKeyPair identity;
         identity.algorithm = crypto::kProtocolSignatureAlgorithm;
@@ -49,6 +67,12 @@ inline int workerMain(int control_fd) {
         reader.finish();
         ContinuousChain chain(path, genesis, validators, crypto::addressFromProtocolPublicKey(identity.public_key), policy);
         if (!chain.open(create, error)) throw std::runtime_error(error);
+        std::unique_ptr<PeerCoordinator> coordinator;
+        if (autonomous) {
+            coordinator = std::make_unique<PeerCoordinator>((fs::path(path) / "peer-outbox.dat").string(), chain,
+                                                          identity, peerExchange);
+            if (!coordinator->open(create, error)) throw std::runtime_error(error);
+        }
         test::Socket listener(socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0));
         sockaddr_in endpoint{};
         endpoint.sin_family = AF_INET;
@@ -64,22 +88,50 @@ inline int workerMain(int control_fd) {
         appendWord(ready, getpid());
         test::sendFrame(control.fd(), encodeReply({ReplyKind::Status, ready, {}}));
         bool drop_reply = false, exit_on_recovery = false;
+        bool exit_on_peer_failure = false;
+        bool targeted_drop = false;
+        RequestKind drop_kind = RequestKind::ChainStatus;
         for (;;) {
+            if (coordinator) {
+                coordinator->tick();
+                if (!coordinator->ready() && exit_on_peer_failure) _exit(71);
+            }
             pollfd descriptors[2]{{control.fd(), POLLIN, 0}, {listener.fd(), POLLIN, 0}};
-            const auto count = poll(descriptors, 2, 5000);
+            const auto count = poll(descriptors, 2, coordinator ? 20 : 5000);
             if (count < 0 && errno == EINTR) continue;
             if (count < 0) throw std::runtime_error("worker poll failed");
             if (descriptors[0].revents & (POLLHUP | POLLERR | POLLNVAL)) return 0;
             if (descriptors[0].revents & POLLIN) {
                 const auto command = test::receiveFrame(control.fd());
                 detail::Reader commands(command);
-                const auto kind = commands.count(2);
+                const auto kind = commands.count(5);
                 if (kind == 1) {
                     const auto point = commands.count(static_cast<std::size_t>(TransitionFailure::AfterActivation));
                     if (!point) throw std::runtime_error("invalid test failure point");
                     chain.failNextTransitionForTest(static_cast<TransitionFailure>(point));
                     exit_on_recovery = true;
-                } else if (kind == 2) drop_reply = true;
+                } else if (kind == 2) { drop_reply = true; targeted_drop = false; }
+                else if (kind == 3) {
+                    if (!coordinator) throw std::runtime_error("peer mode not enabled");
+                    std::vector<LocalPeer> peers;
+                    for (std::size_t i = 0; i < 2; ++i) {
+                        const auto address = commands.address();
+                        const auto port = commands.count(65535);
+                        if (port == ntohs(endpoint.sin_port)) throw std::runtime_error("peer endpoint cannot be self");
+                        peers.push_back({address, static_cast<std::uint16_t>(port)});
+                    }
+                    coordinator->setPeers(std::move(peers));
+                } else if (kind == 4) {
+                    if (!coordinator) throw std::runtime_error("peer mode not enabled");
+                    const auto point = commands.count(static_cast<std::size_t>(PeerFailure::AfterLocalApply));
+                    if (!point) throw std::runtime_error("invalid peer failure point");
+                    coordinator->failNextCertificateForTest(static_cast<PeerFailure>(point));
+                    exit_on_peer_failure = true;
+                } else if (kind == 5) {
+                    drop_reply = true;
+                    targeted_drop = true;
+                    drop_kind = static_cast<RequestKind>(commands.count(static_cast<std::size_t>(RequestKind::DeliverBlock)));
+                }
                 commands.finish();
                 test::sendFrame(control.fd(), encodeReply({ReplyKind::Accepted, {}, {}}));
                 if (kind == 0) return 0;
@@ -91,9 +143,15 @@ inline int workerMain(int control_fd) {
             try {
                 test::Socket client(fd);
                 const auto request = test::receiveFrame(client.fd());
-                const auto reply = handleValidatorRequest(request, chain, identity);
+                const auto reply = coordinator ? coordinator->handle(request) : handleValidatorRequest(request, chain, identity);
                 if (exit_on_recovery && reply.kind == ReplyKind::RecoveryRequired) _exit(70);
-                if (drop_reply) { drop_reply = false; continue; }
+                ValidatorRequest parsed;
+                std::string parse_error;
+                if (drop_reply && (!targeted_drop || (decodeRequest(request, parsed, parse_error) && parsed.kind == drop_kind))) {
+                    drop_reply = false;
+                    targeted_drop = false;
+                    continue;
+                }
                 test::sendFrame(client.fd(), encodeReply(reply));
             } catch (const std::exception&) {
                 // A malformed/truncated frame or disconnected client must not stop other clients.
@@ -108,8 +166,8 @@ inline int workerMain(int control_fd) {
 
 class Worker {
 public:
-    Worker(std::string executable, fs::path directory, Fixture& fixture, std::size_t index)
-        : executable_(std::move(executable)), directory_(std::move(directory)), fixture_(fixture), index_(index) {}
+    Worker(std::string executable, fs::path directory, Fixture& fixture, std::size_t index, bool autonomous = false)
+        : executable_(std::move(executable)), directory_(std::move(directory)), fixture_(fixture), index_(index), autonomous_(autonomous) {}
     ~Worker() { terminate(); }
     Worker(const Worker&) = delete;
     Worker& operator=(const Worker&) = delete;
@@ -120,6 +178,7 @@ public:
         const auto path = directory_.string();
         blob(startup, protocol::Bytes(path.begin(), path.end()));
         appendWord(startup, create);
+        appendWord(startup, autonomous_);
         appendWord(startup, fixture_.policy.max_members);
         const auto& key = fixture_.validators[index_].key;
         blob(startup, key.public_key);
@@ -128,8 +187,8 @@ public:
         blob(startup, encodeBlock(fixture_.genesis));
         int pair[2];
         require(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0, "worker control socket pair");
-        auto parent = std::make_unique<test::Socket>(pair[0], 15);
-        test::Socket child(pair[1], 15);
+        auto parent = std::make_unique<test::Socket>(pair[0], 30);
+        test::Socket child(pair[1], 30);
         const auto parent_pid = getpid();
         pid_ = fork();
         require(pid_ >= 0, "fork validator process");
@@ -181,6 +240,18 @@ public:
 
     void armFailure(TransitionFailure point) { command(1, static_cast<std::uint64_t>(point)); }
     void dropNextReply() { command(2); }
+    void dropReplyFor(RequestKind kind) { command(5, static_cast<std::uint64_t>(kind)); }
+    void armPeerFailure(PeerFailure point) { command(4, static_cast<std::uint64_t>(point)); }
+    void configurePeers(const std::vector<LocalPeer>& peers) {
+        require(peers.size() == 2, "configure exactly two peers");
+        protocol::Bytes bytes;
+        appendWord(bytes, 3);
+        for (const auto& peer : peers) {
+            blob(bytes, {peer.address.begin(), peer.address.end()});
+            appendWord(bytes, peer.port);
+        }
+        controlCommand(bytes);
+    }
     void crash() { require(pid_ > 0, "crash running worker"); terminate(); }
     void shutdown() { command(0); expectExit(0); }
 
@@ -228,7 +299,12 @@ private:
         require(pid_ > 0 && control_, "worker control available");
         protocol::Bytes bytes;
         appendWord(bytes, kind);
-        if (kind == 1) appendWord(bytes, argument);
+        if (kind == 1 || kind == 4 || kind == 5) appendWord(bytes, argument);
+        controlCommand(bytes);
+    }
+
+    void controlCommand(const protocol::Bytes& bytes) {
+        require(pid_ > 0 && control_, "worker control available");
         test::sendFrame(control_->fd(), bytes);
         ValidatorReply reply;
         std::string error;
@@ -254,6 +330,7 @@ private:
     fs::path directory_;
     Fixture& fixture_;
     std::size_t index_;
+    bool autonomous_;
     pid_t pid_{-1};
     std::uint16_t port_{0};
     std::unique_ptr<test::Socket> control_;

@@ -392,12 +392,36 @@ if(PRIMECHAIN_BUILD_EXPERIMENTS)
         experiments/prime_blocks/continuous_chain.cpp
         experiments/prime_blocks/validator_messages.cpp
         experiments/prime_blocks/process_tests.cpp
+        experiments/prime_blocks/peer_coordinator.cpp
     )
     target_link_libraries(primechain-local-validator-tests PRIVATE primechain_core Threads::Threads)
     target_compile_options(primechain-local-validator-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME local_validator_process_recovery
         COMMAND primechain-local-validator-tests ${CMAKE_CURRENT_BINARY_DIR}/prime-block-experiments)
     set_tests_properties(local_validator_process_recovery PROPERTIES TIMEOUT 240)
+    add_executable(primechain-peer-coordination-tests
+        experiments/prime_blocks/prime_blocks.cpp
+        experiments/prime_blocks/atomic_ranges.cpp
+        experiments/prime_blocks/continuous_chain.cpp
+        experiments/prime_blocks/validator_messages.cpp
+        experiments/prime_blocks/peer_coordinator.cpp
+        experiments/prime_blocks/peer_tests.cpp
+    )
+    target_link_libraries(primechain-peer-coordination-tests PRIVATE primechain_core Threads::Threads)
+    target_compile_options(primechain-peer-coordination-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME autonomous_peer_coordination
+        COMMAND primechain-peer-coordination-tests ${CMAKE_CURRENT_BINARY_DIR}/prime-block-experiments)
+    set_tests_properties(autonomous_peer_coordination PROPERTIES TIMEOUT 240)
+    add_executable(primechain-conflict-tests
+        experiments/prime_blocks/prime_blocks.cpp
+        experiments/prime_blocks/atomic_ranges.cpp
+        experiments/prime_blocks/conflict_tests.cpp
+    )
+    target_link_libraries(primechain-conflict-tests PRIVATE primechain_core)
+    target_compile_options(primechain-conflict-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME prime_block_conflict_boundaries
+        COMMAND primechain-conflict-tests ${CMAKE_CURRENT_BINARY_DIR}/prime-block-experiments)
+    set_tests_properties(prime_block_conflict_boundaries PROPERTIES TIMEOUT 60)
     foreach(limit 2 3 100 150)
         add_test(NAME prime_block_experiment_${limit}
             COMMAND primechain-prime-block-experiment ${limit} ${CMAKE_CURRENT_BINARY_DIR}/prime-block-experiments)

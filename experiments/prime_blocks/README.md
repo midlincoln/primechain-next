@@ -138,6 +138,9 @@ transition recovery. It retains journals and is not connected to a live server.
 The [local validator process test](local-validators.md) connects the coordinator
 to TCP messages in three independent local workers with explicit test-driven
 quorum collection and catch-up.
+The follow-up [autonomous peer test](peer-coordination.md) moves quorum collection
+and durable delivery retries into the workers. It keeps the same fixed-validator,
+single-round limits and is not a deployment-ready network implementation.
 
 The existing client/node APIs remain unchanged. See `docs/prime-block-design.md`
 for the decisions needed before this becomes a network protocol.

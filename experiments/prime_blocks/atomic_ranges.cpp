@@ -336,6 +336,12 @@ PrimeValue RangeJournal::acceptedFrontier() const {
     return accepted_.empty() ? finalized_.frontier() : accepted_.back().end;
 }
 
+std::optional<CompositeRange> RangeJournal::receipt(const Hash256& subject) const {
+    for (const auto& range : accepted_)
+        if (rangeSubjectHash(range) == subject) return range;
+    return std::nullopt;
+}
+
 Hash256 RangeJournal::acceptedRangeTip() const {
     return accepted_.empty() ? Hash256{} : rangeSubjectHash(accepted_.back());
 }

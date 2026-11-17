@@ -21,7 +21,7 @@ void bound(const protocol::Bytes& bytes) {
 
 protocol::Bytes encodeRequest(RequestKind kind, const protocol::Bytes& payload) {
     bound(payload);
-    if (kind > RequestKind::InstallBlock) throw std::runtime_error("unknown request kind");
+    if (kind > RequestKind::DeliverBlock) throw std::runtime_error("unknown request kind");
     protocol::Bytes bytes(kRequestMagic.begin(), kRequestMagic.end());
     appendWord(bytes, static_cast<std::uint64_t>(kind));
     blob(bytes, payload);
@@ -29,9 +29,24 @@ protocol::Bytes encodeRequest(RequestKind kind, const protocol::Bytes& payload) 
     return bytes;
 }
 
+bool decodeRequest(const protocol::Bytes& bytes, ValidatorRequest& request, std::string& error) {
+    error.clear();
+    try {
+        bound(bytes);
+        detail::Reader reader(bytes);
+        reader.magic(kRequestMagic);
+        ValidatorRequest result;
+        result.kind = static_cast<RequestKind>(reader.count(static_cast<std::size_t>(RequestKind::DeliverBlock)));
+        result.payload = reader.blob(kExperimentMaxBytes);
+        reader.finish();
+        request = std::move(result);
+        return true;
+    } catch (const std::exception& exception) { error = exception.what(); return false; }
+}
+
 protocol::Bytes encodeReply(const ValidatorReply& reply) {
     bound(reply.payload);
-    if (reply.kind > ReplyKind::AlreadyInstalled || reply.error.size() > kMaxErrorBytes)
+    if (reply.kind > ReplyKind::Pending || reply.error.size() > kMaxErrorBytes)
         throw std::runtime_error("invalid reply kind or error length");
     protocol::Bytes bytes(kReplyMagic.begin(), kReplyMagic.end());
     appendWord(bytes, static_cast<std::uint64_t>(reply.kind));
@@ -48,7 +63,7 @@ bool decodeReply(const protocol::Bytes& bytes, ValidatorReply& reply, std::strin
         detail::Reader reader(bytes);
         reader.magic(kReplyMagic);
         ValidatorReply result;
-        result.kind = static_cast<ReplyKind>(reader.count(static_cast<std::size_t>(ReplyKind::AlreadyInstalled)));
+        result.kind = static_cast<ReplyKind>(reader.count(static_cast<std::size_t>(ReplyKind::Pending)));
         result.payload = reader.blob(kExperimentMaxBytes);
         const auto message = reader.blob(kMaxErrorBytes);
         result.error.assign(message.begin(), message.end());
@@ -87,13 +102,12 @@ ValidatorReply handleRequest(const protocol::Bytes& request, State& journal,
                               {}, error.substr(0, kMaxErrorBytes)};
     };
     try {
-        bound(request);
-        detail::Reader reader(request);
-        reader.magic(kRequestMagic);
-        const auto kind = static_cast<RequestKind>(reader.count(static_cast<std::size_t>(RequestKind::InstallBlock)));
-        const auto payload = reader.blob(kExperimentMaxBytes);
-        reader.finish();
         std::string error;
+        ValidatorRequest decoded;
+        if (!decodeRequest(request, decoded, error)) return failure(error);
+        const auto kind = decoded.kind;
+        const auto& payload = decoded.payload;
+        if (kind > RequestKind::InstallBlock) return failure("operation requires peer coordinator");
         if (kind == RequestKind::Status || kind == RequestKind::ChainStatus) {
             if (!payload.empty()) return failure("status request must be empty");
             protocol::Bytes status;

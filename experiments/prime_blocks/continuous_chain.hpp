@@ -35,6 +35,10 @@ public:
     PrimeValue acceptedFrontier() const;
     Hash256 acceptedRangeTip() const;
     std::vector<CompositeProof> composites() const;
+    std::optional<CompositeRange> pendingRange() const;
+    std::optional<PrimeBlock> pendingBlock() const;
+    std::optional<CompositeRange> rangeReceipt(const Hash256& anchor, const Hash256& subject) const;
+    std::optional<PrimeBlock> installedBlock(std::uint64_t height) const;
     void failNextTransitionForTest(TransitionFailure point) { failure_ = point; }
 
 private:

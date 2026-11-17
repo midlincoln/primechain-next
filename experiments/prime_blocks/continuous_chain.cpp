@@ -280,4 +280,34 @@ std::vector<CompositeProof> ContinuousChain::composites() const {
     return journal_ ? journal_->composites() : std::vector<CompositeProof>{};
 }
 
+std::optional<CompositeRange> ContinuousChain::pendingRange() const {
+    return ready_ && journal_ ? journal_->pendingRange() : std::nullopt;
+}
+
+std::optional<PrimeBlock> ContinuousChain::pendingBlock() const {
+    return ready_ && journal_ ? journal_->pendingBlock() : std::nullopt;
+}
+
+std::optional<PrimeBlock> ContinuousChain::installedBlock(std::uint64_t height) const {
+    if (!ready_ || height >= history_.blockCount()) return std::nullopt;
+    return readBlock(blockPath(height));
+}
+
+std::optional<CompositeRange> ContinuousChain::rangeReceipt(const Hash256& anchor, const Hash256& subject) const {
+    if (!ready_) return std::nullopt;
+    if (anchor == history_.tip()) return journal_->receipt(subject);
+    // Archived journals are retained in this prototype. Replay binds the lookup to installed history.
+    PrimeBlockReplay prefix(history_.validatorSet());
+    std::string error;
+    for (std::uint64_t height = 0; height < history_.blockCount(); ++height) {
+        if (!prefix.append(readBlock(blockPath(height)), error)) throw std::runtime_error(error);
+        if (prefix.tip() != anchor) continue;
+        const auto path = (fs::path(directory_) / ("interval-" + std::to_string(prefix.blockCount()) + ".journal")).string();
+        RangeJournal archived(path, prefix, prefix.validatorSet(), local_validator_, policy_);
+        if (!archived.open(false, error)) throw std::runtime_error("archived range receipt: " + error);
+        return archived.receipt(subject);
+    }
+    return std::nullopt;
+}
+
 } // namespace primechain::experiments
