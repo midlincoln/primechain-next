@@ -428,6 +428,12 @@ if(PRIMECHAIN_BUILD_EXPERIMENTS)
     target_compile_options(primechain-round-change-model-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME round_change_v1_model COMMAND primechain-round-change-model-tests)
     set_tests_properties(round_change_v1_model PROPERTIES TIMEOUT 120)
+    add_executable(primechain-two-phase-model-tests
+        experiments/prime_blocks/two_phase_model_tests.cpp
+    )
+    target_compile_options(primechain-two-phase-model-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME round_change_two_phase_model COMMAND primechain-two-phase-model-tests)
+    set_tests_properties(round_change_two_phase_model PROPERTIES TIMEOUT 180)
     foreach(limit 2 3 100 150)
         add_test(NAME prime_block_experiment_${limit}
             COMMAND primechain-prime-block-experiment ${limit} ${CMAKE_CURRENT_BINARY_DIR}/prime-block-experiments)

@@ -178,6 +178,31 @@ in `prime_block_conflict_boundaries`). Releasing it safely needs a lock that
 means "a quorum may have decided" rather than "I signed", which is G1's
 two-phase fix.
 
+### Proposed two-phase rules
+
+`experiments/prime_blocks/two_phase_model_tests.cpp` (CTest
+`round_change_two_phase_model`) models recommendations 2 to 4 below, following
+Tendermint Algorithm 1 with the inherited `ceil(2n/3)` quorum. It checks:
+
+- **The G2 scenario decides without C**, for every proposer rotation.
+- **Any two live validators decide** when the third is down from the start.
+- **A lock protects a value that may already be decided.** A decides X; B is
+  locked on X but misses the decision; the next proposer C never saw X and
+  proposes Z. B refuses Z, and B and C go on to decide X.
+- **A Byzantine proposer cannot unlock honest validators** with a claimed
+  valid round that has no prevote quorum behind it (`n = 4`).
+- **No conflicting decisions** in seeded random schedules for `n = 3` and
+  `n = 4` with loss, delay and crash/restart, and for `n = 4` with one
+  equivocating Byzantine validator.
+- **A scripted fork at `n = 3` with one Byzantine validator,** as
+  `n >= 3f + 1` predicts.
+
+Mutation checks, run by hand, are all caught: ignoring the lock, accepting an
+unproven valid round, too small a quorum at `n = 4`, and dropping `validValue`
+(a liveness failure). Both models pass under AddressSanitizer and
+UndefinedBehaviorSanitizer. Neither models timers, so recommendation 5
+(growing timeouts) is still untested.
+
 ## What Next should do
 
 These recommendations apply to both range decisions and closing-prime
@@ -217,13 +242,13 @@ an existing reviewed implementation against the gates in
 
 Add these to the existing peer and conflict harnesses:
 
-- **G2 repro:** done for the inherited rules (`round_change_v1_model`). The
-  same scenario must decide under the new rules once they are modelled.
+- **G2 repro:** done for both rule sets. It stalls under the inherited rules
+  and decides under the two-phase rules.
 - **No conflicting decisions:** for every combination of partition, delayed
   old-round vote and crash with `n = 3, f = 0`, no two honest validators decide
   different values.
-- **Byzantine case at `n = 4, f = 1`:** one equivocating signer cannot produce
-  two valid conflicting certificates.
+- **Byzantine case at `n = 4, f = 1`:** covered at model level. It still
+  needs testing against real signatures and journals once implemented.
 - **Liveness under rising delay:** with message delay above the base timeout, a
   decision is still reached once the round timeout exceeds the delay.
 - **Evidence:** a conflicting vote is persisted and can be checked by a third
