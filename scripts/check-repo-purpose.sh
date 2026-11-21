@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-expected_path="/home/ovanes/primechain-next"
-expected_remote="git@github.com:midlincoln/primechain-next.git"
+expected_path="/home/primechain/primechain-next"
+expected_remotes=(
+  "https://github.com/midlincoln/primechain-next.git"
+  "git@github.com:midlincoln/primechain-next.git"
+)
 
 actual_path="$(pwd -P)"
 actual_remote="$(git remote get-url origin 2>/dev/null || true)"
@@ -18,8 +21,14 @@ if [[ "${actual_path}" != "${expected_path}" ]]; then
   exit 1
 fi
 
-if [[ "${actual_remote}" != "${expected_remote}" ]]; then
-  echo "ERROR: expected origin ${expected_remote}" >&2
+remote_ok=0
+for expected_remote in "${expected_remotes[@]}"; do
+  if [[ "${actual_remote}" == "${expected_remote}" ]]; then
+    remote_ok=1
+  fi
+done
+if [[ "${remote_ok}" -ne 1 ]]; then
+  echo "ERROR: expected origin to be one of: ${expected_remotes[*]}" >&2
   exit 1
 fi
 

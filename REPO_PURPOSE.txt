@@ -5,15 +5,18 @@ Purpose:
   New-chain protocol design and experiments.
 
 Canonical local path:
-  /home/ovanes/primechain-next
+  /home/primechain/primechain-next
+  (this host also runs a live v1 validator; see below)
 
-Canonical remote:
+Canonical remote (HTTPS or SSH):
+  https://github.com/midlincoln/primechain-next.git
   git@github.com:midlincoln/primechain-next.git
 
 Do not use this repository for:
   - live current-testnet operations;
   - emergency fixes to the running chain;
-  - validator service changes for /home/ovanes/primes;
+  - validator service changes for the live v1 checkout at
+    /home/primechain/primechain;
   - shared chain data, wallets, peer state, or systemd units from the old chain.
 
 Before commits or pushes, run:
