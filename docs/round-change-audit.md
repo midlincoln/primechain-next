@@ -102,12 +102,17 @@ round-change certificate proves that Y@r2 is the justified value.
 PBFT and Tendermint let a replica move to a value that carries a
 higher-round quorum justification.
 
-Example at `n = 3`: A signs X@1, but no certificate forms. In round 2, B and C
-lock Y@2. If C then goes offline, A and B are both honest and online, but A
-will never sign Y and B will never sign X, so the chain stops for good.
-The Next conflict tests (`prime_block_conflict_boundaries`) reproduce this
-class of permanent stall. It is the likeliest source of the "round stalled"
-episodes in the live logs. That is not yet confirmed from the live data.
+Example at `n = 3` (reproduced by `round_change_v1_model`): A proposes X in
+round 1, and the message to B is lost. A is now locked on X@1 with no
+certificate. B and C certify round 2 without A's lock, so proposer B is free and
+signs Y. C crashes before co-signing. From then on every round-change
+certificate carries B's Y@2, so every candidate is Y. Whenever the committee is
+{A, B}, A refuses Y, and the other committees need C. A and B are honest,
+online, and form a 2-of-3 quorum, but nothing is finalized **until C returns**.
+That defeats the point of 2-of-3, which is to keep going with one validator
+down. In the model, the stall reproduces for every committee rotation, and Y is
+certified as soon as C is back. It is a plausible source of the "round stalled"
+episodes in the live logs, but that has not been confirmed from live data.
 
 ### G3. Fixed committee of exactly `q` per round (medium impact)
 
@@ -151,6 +156,28 @@ sender is not hiding a higher lock. At `n = 3, f = 0` this is irrelevant. With
 `f >= 1`, PBFT relies on the quorum intersection containing at least one
 *honest* validator that reports truthfully. That holds only with `n >= 4`.
 
+## Model findings
+
+`experiments/prime_blocks/round_change_model_tests.cpp` (CTest
+`round_change_v1_model`) encodes the inherited rules for one position and
+three validators. It is a model, not the live code. It checks:
+
+- **G2 reproduced** for all three committee rotations, as in the example above,
+  plus recovery once C returns.
+- **No conflicting certificates** in 20,000 seeded random schedules with
+  message loss, delay, and crash/restart, and no equivocating signer.
+- **Mutation checks** (run by hand, not part of CTest): removing the lock check
+  breaks safety, and the random schedules catch it. Removing lock reporting or
+  the highest-lock rule does *not* break safety. It only removes recovery.
+
+So **v1's safety comes from the permanent locks plus quorum intersection.**
+Lock reporting and the highest-lock rule exist only for liveness. The
+permanent lock that keeps v1 safe is the same thing that causes G2. It cannot
+simply be released after a timeout (see also the timeout-reset counterexample
+in `prime_block_conflict_boundaries`). Releasing it safely needs a lock that
+means "a quorum may have decided" rather than "I signed", which is G1's
+two-phase fix.
+
 ## What Next should do
 
 These recommendations apply to both range decisions and closing-prime
@@ -162,7 +189,7 @@ decisions. Each decision is ordered by its consensus position, as set out in
 2. **Use two vote phases** (prevote and precommit). Lock only on a quorum of
    prevotes for the same value in the same round, and commit only on a quorum
    of precommits. *(Fixes G1.)*
-3. **Allow a later justified unlock.** A validator locked on X@r may prevote Y
+3. **Allow a later justified unlock, but only together with point 2.** A validator locked on X@r may prevote Y
    in round r' > r only when the proposal carries a quorum prevote certificate
    for Y from a round r'' with r < r'' < r'. *(Fixes G2.)*
 4. **Accept any quorum** of signers from the active set, not only an assigned
@@ -190,8 +217,8 @@ an existing reviewed implementation against the gates in
 
 Add these to the existing peer and conflict harnesses:
 
-- **G2 repro:** A locks X@1, B and C lock Y@2, C goes offline. Today this
-  stalls. After the change, A and B must decide.
+- **G2 repro:** done for the inherited rules (`round_change_v1_model`). The
+  same scenario must decide under the new rules once they are modelled.
 - **No conflicting decisions:** for every combination of partition, delayed
   old-round vote and crash with `n = 3, f = 0`, no two honest validators decide
   different values.

@@ -422,6 +422,12 @@ if(PRIMECHAIN_BUILD_EXPERIMENTS)
     add_test(NAME prime_block_conflict_boundaries
         COMMAND primechain-conflict-tests ${CMAKE_CURRENT_BINARY_DIR}/prime-block-experiments)
     set_tests_properties(prime_block_conflict_boundaries PROPERTIES TIMEOUT 60)
+    add_executable(primechain-round-change-model-tests
+        experiments/prime_blocks/round_change_model_tests.cpp
+    )
+    target_compile_options(primechain-round-change-model-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME round_change_v1_model COMMAND primechain-round-change-model-tests)
+    set_tests_properties(round_change_v1_model PROPERTIES TIMEOUT 120)
     foreach(limit 2 3 100 150)
         add_test(NAME prime_block_experiment_${limit}
             COMMAND primechain-prime-block-experiment ${limit} ${CMAKE_CURRENT_BINARY_DIR}/prime-block-experiments)
