@@ -434,6 +434,23 @@ if(PRIMECHAIN_BUILD_EXPERIMENTS)
     target_compile_options(primechain-two-phase-model-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME round_change_two_phase_model COMMAND primechain-two-phase-model-tests)
     set_tests_properties(round_change_two_phase_model PROPERTIES TIMEOUT 180)
+    find_path(PRIMECHAIN_GMPXX_INCLUDE gmpxx.h)
+    find_library(PRIMECHAIN_GMP_LIBRARY gmp)
+    find_library(PRIMECHAIN_GMPXX_LIBRARY gmpxx)
+    if(PRIMECHAIN_GMPXX_INCLUDE AND PRIMECHAIN_GMP_LIBRARY AND PRIMECHAIN_GMPXX_LIBRARY)
+        add_executable(primechain-quadratic-cert-tests
+            experiments/extensions/quadratic_certs.cpp
+            experiments/extensions/quadratic_tests.cpp
+        )
+        target_include_directories(primechain-quadratic-cert-tests PRIVATE ${PRIMECHAIN_GMPXX_INCLUDE})
+        target_link_libraries(primechain-quadratic-cert-tests PRIVATE ${PRIMECHAIN_GMPXX_LIBRARY} ${PRIMECHAIN_GMP_LIBRARY})
+        target_compile_options(primechain-quadratic-cert-tests PRIVATE -Wall -Wextra -Wpedantic)
+        add_test(NAME quadratic_field_certificates
+            COMMAND primechain-quadratic-cert-tests ${CMAKE_CURRENT_SOURCE_DIR}/experiments/extensions/quadratic_vectors.txt)
+        set_tests_properties(quadratic_field_certificates PROPERTIES TIMEOUT 120)
+    else()
+        message(STATUS "GMP (libgmp-dev) not found: skipping extension certificate experiments")
+    endif()
     foreach(limit 2 3 100 150)
         add_test(NAME prime_block_experiment_${limit}
             COMMAND primechain-prime-block-experiment ${limit} ${CMAKE_CURRENT_BINARY_DIR}/prime-block-experiments)
