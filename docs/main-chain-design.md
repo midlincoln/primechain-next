@@ -52,6 +52,19 @@ implicit (sieve) shortcut.
 Once the accepted frontier reaches p − 1, the closing prime p is decided
 separately. Its acceptance closes the block, and the chain frontier becomes p.
 
+### D6. Transactions are included per block (2026-11-23)
+
+- Main-chain transactions ride in the **closing-prime decision**. A transfer
+  is final when its block closes, and its order within the block is
+  preserved.
+- Ring assets (rings layer) are transferred inside **their own field chain**,
+  so each ring is its own tree of finality. The main chain only anchors them
+  through `extension_root`.
+- Consequences, accepted: finality time equals block time (seconds to a
+  minute with active mining); if nobody mines, transfers wait, as in v1. A
+  transaction-only fallback decision can be added later without changing the
+  block format.
+
 ### Fixed by earlier work
 
 - **Consensus:** two-phase (prevote/precommit) rounds, lock on a quorum of
@@ -65,8 +78,6 @@ separately. Its acceptance closes the block, and the chain frontier becomes p.
 
 ## Open (A1)
 
-- Where transactions go (which decisions carry them) and when a transfer is
-  final.
 - Block header fields: Merkle roots (ranges, transactions, state),
   `extension_root`, reserved privacy roots, policy and validator-epoch
   digests.
