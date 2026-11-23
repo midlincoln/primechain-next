@@ -163,10 +163,11 @@ together with canonical generators modulo units.
 
 ## Proposed (awaiting agreement)
 
-- **D4 amendment (main chain):** ties between batches with the same end are
-  broken by content hash, for example the lowest hash of (submission, block
-  height), instead of arrival order, so settlement never depends on network
-  position.
+- **Ties (reviewed 2026-11-23):** the content-hash tie-break proposal was
+  withdrawn, because a copier could grind a lower hash and win. Ties stay by
+  arrival order: main-chain ranges (D4), the earliest finalized commit for
+  ring certificates (R5), and the first valid field entry per q per ring
+  (R10).
 
 ## Open
 
