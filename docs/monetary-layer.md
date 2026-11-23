@@ -35,6 +35,21 @@ miner ──(buys validator shares + holds reserves)──► bank ──(enough
   enough for the reserve". Four or more independent validators give real
   Byzantine tolerance (D13).
 
+## Money and bonds are separate (2026-11-23)
+
+- **Money:** all micro-units stay **equal in value** and fungible, as in v2.
+  Payments need no prices, and lending against cash stays free of price
+  oracles.
+- **Prime bonds:** each main-chain prime has a **bond record**, the twin of
+  the ring record (R6): **finder** (permanent; taken from the block's prime
+  submission), **payee/owner** (the current holder; transferable by a signed
+  transfer recorded on chain), and optional **liens**. The prime's ring
+  income (R11 upstream share) is paid to **whoever owns the bond now**, which
+  anyone can look up on chain.
+- **Saving:** buying a prime means buying its bond: the right to its future
+  ring income. Fertile primes (ones that split in many rings) are worth more
+  as bonds, while the money itself stays one equal unit.
+
 ## Instruments
 
 | Instrument | What it is |

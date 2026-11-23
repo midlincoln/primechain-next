@@ -190,7 +190,9 @@ together with canonical generators modulo units.
   matches the main-chain prime finder's 45%, so neither layer is
   automatically more attractive.
 - **Upstream** goes to the ancestors along the DAG: for quadratic and cubic
-  rings that is only the main-chain finder of p. For nested rings (degree ≥ 4)
+  rings that is only the main-chain prime p's bond: paid to the **current
+  owner (payee) of p's prime bond** (`monetary-layer.md`), initially its
+  finder. For nested rings (degree ≥ 4)
   it is divided along the path, halving per step, with the remainder to the
   main-chain finder (to be confirmed: halving or equal split). The total
   stays 35% at any depth.
