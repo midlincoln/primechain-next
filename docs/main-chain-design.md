@@ -31,7 +31,13 @@ implicit (sieve) shortcut.
 ### D4. Range competition and acceptance (2026-11-23)
 
 1. Among competing range batches for the same position, **the batch with the
-   highest end wins**. Ties go to the earliest arrival.
+   highest end wins**. This is a content rule, so it does not depend on
+   network position. **Ties** (exactly the same end) are rare and are settled
+   by the round's proposer, which picks the first one in its own queue; the
+   vote then makes the choice final. There are no timestamps and no global
+   arrival order. (Clarified 2026-11-23. v1 achieved full position
+   independence with sealed commits, an agreed set and the lowest commitment
+   hash, at the cost of extra rounds per integer.)
 2. A batch that arrives while another is being decided is **queued**.
 3. After a decision, a queued batch is re-examined against the new accepted
    frontier f:
