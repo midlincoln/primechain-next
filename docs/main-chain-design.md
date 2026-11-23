@@ -65,6 +65,33 @@ separately. Its acceptance closes the block, and the chain frontier becomes p.
   transaction-only fallback decision can be added later without changing the
   block format.
 
+### D7. Genesis seeds 2 and 3 (2026-11-23)
+
+- Genesis contains the primes 2 and 3 as a seed, with no mining rewards.
+- The first mined block closes at 5, with gap {4}. From then on every gap
+  contains at least one composite, so the reward rule has no special case
+  (in v1, the block closing at 3 had an empty interval).
+- Height equals prime index: 2 and 3 are primes #1 and #2 in genesis, and
+  block #3 closes at 5.
+- For the rings layer the initial frontier is F = 3, so every field with
+  M_K ≤ 3 is eligible from genesis.
+
+### D8. Rewards within a block (2026-11-23)
+
+- `reward(p)` is a protocol function of the closing prime. At launch it
+  returns 1,000,000 micro-units for every p, as in v1, and later schedules
+  can change it without changing the block format.
+- Split: 45% to the prime finder, 45% to composites, 10% to the validator
+  pool.
+- The composite share is paid **per composite**: share = 45% ÷ (number of
+  composites in the gap). Each range miner receives share × (composites
+  accepted from their range, i.e. the accepted tail, per D4).
+- The remainder of the integer division goes to the prime finder.
+- Example, gap 1130–1150 (21 composites), prime 1151: share = 450,000 / 21 =
+  21,428, remainder 12. Y (11 composites) gets 235,708; Z (10 composites)
+  gets 214,280; the prime finder gets 450,012; the validator pool gets
+  100,000.
+
 ### Fixed by earlier work
 
 - **Consensus:** two-phase (prevote/precommit) rounds, lock on a quorum of
@@ -83,8 +110,6 @@ separately. Its acceptance closes the block, and the chain frontier becomes p.
   digests.
 - Signing domains: network ID, epoch, position, round, phase.
 - Timeouts: base value and growth per round.
-- Reward as a function of the prime (a constant at launch), and how range
-  shares are computed.
 - Versioned record and transaction types.
 - The fault-model statement: three validators are crash-tolerant; four
   independent validators are needed for one Byzantine fault.
