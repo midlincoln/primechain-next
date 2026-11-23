@@ -51,11 +51,50 @@ Reserve Banks do:
   the reveal window after it closes.
 - Gate states are part of the policy digest in every block header (D9).
 
+### R7. Ordering by norm (2026-11-23)
+
+- Within each ring, field-chain entries are ordered by **increasing norm** of
+  the prime ideals they record. The norm is unaffected by units and works the
+  same way for real and imaginary fields. For example, (3 + √17)/2 has |N| = 2,
+  and 2 + i has N = 5.
+- **Invariant:** no ring may record a norm greater than the main-chain
+  frontier F. F is always the maximum.
+- A global order across all trees is **not** part of consensus. It is a
+  derived index that anyone can compute, if one is ever needed.
+
+### R8. Conjugates: one entry per split prime (2026-11-23)
+
+When q splits into π and π̄, one entry is recorded with **one canonical
+generator**; the conjugate is derived from it. There is one reward per split
+q, since finding one generator finds both. The canonical choice of which
+conjugate (for example b > 0 in Q(i), so 2 + i rather than 2 − i) is fixed
+together with canonical generators modulo units.
+
+### R9. Only split and ramified primes are recorded (2026-11-23)
+
+- Inert primes produce no new prime element and anyone can determine them
+  from D (one Kronecker symbol), so they are **not recorded and not paid**.
+  The main chain already paid for their primality.
+- Validators check that every prime skipped between two consecutive entries
+  is inert, so no split prime can be omitted silently.
+
+### R10. Units and associates (2026-11-23)
+
+- A recorded generator must have norm ±q for a prime q > 1. Units (norm ±1)
+  can never pass.
+- **At most one entry per rational prime q per ring,** so the same prime ideal
+  cannot be recorded twice under different associates (π and π·ε).
+- Special treatment of units (for example recording fundamental units as
+  evidence) would be a new versioned entry type.
+
 ## Proposed (awaiting agreement)
 
-- **R1, anchoring:** `extension_root` = Merkle root over the registry tip and
-  every field-chain tip. Ring messages are collected between blocks and
-  finalized with the closing-prime decision, like transactions (D6).
+- **R1, structure (revised, DAG):** each ring has its own chain. Every
+  ring block links to its previous ring block and to the main-chain block it
+  depends on (the one that finalized the prime it records). Ring blocks are
+  finalized by validators in their own decisions, batched across rings and
+  independent of main-chain blocks. The main header's `extension_root` is an
+  optional snapshot of the latest finalized ring tips, for light clients.
 - **R3, eligibility:** Minkowski bound M_K ≤ F (for quadratic fields:
   D ≤ 4F² if real; 4|D| ≤ π²F² if imaginary, with a rational enclosure of
   π²). The gates control the pace.
