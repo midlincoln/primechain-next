@@ -101,7 +101,9 @@ separately. Its acceptance closes the block, and the chain frontier becomes p.
 
 Signed content: version, network ID, height, previous block hash, prime,
 policy digest, validator-epoch digest, `ranges_root`, `transactions_root`,
-`state_root`, `extension_root`, and a reserved `privacy_root` (empty for now).
+`state_root`, `extension_root`, a reserved `privacy_root` and a reserved
+`finance_root` (both empty for now; `finance_root` is for the monetary layer:
+shares, bonds, loans, reserves).
 The previous prime is not stored: it is the previous block's prime, which the
 previous hash commits to. The block certificate (the precommit signatures)
 sits outside the signed content.

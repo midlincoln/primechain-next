@@ -125,6 +125,27 @@ frontier. The same rule applies to real and imaginary fields, with no π.
   small, and copies are handled by arrival order (D4) and one entry per q per
   ring (R10). This can be strengthened later if copying is observed.
 
+### R6. Founder record and reward schedule (2026-11-23)
+
+Each ring's registry record carries:
+
+- **founder (identity):** permanent attribution of who discovered the ring;
+  never changes;
+- **payee:** who currently receives the founder share. It starts as the
+  founder and can be changed by a signed assignment;
+- **liens (optional, versioned):** "pay lender L until X units are repaid,
+  then return to the payee", so ring bonds can be pledged (see
+  `monetary-layer.md`);
+- **reward schedule:** a type plus parameters (founder share y, decay kind
+  and rate, budget), **copied from the validators' current policy when the
+  ring is registered and fixed for that ring afterwards**. Validators may
+  change the policy for future rings only, with notice. Existing ring bonds
+  keep their terms.
+
+The actual schedule (budget per epoch, per cohort, decay per ring or across
+rings) is open and will be chosen by simulation (`monetary-layer.md`); the
+format covers all of the options.
+
 ### R7. Ordering by norm (2026-11-23)
 
 - Within each ring, field-chain entries are ordered by **increasing norm** of
@@ -191,7 +212,6 @@ together with canonical generators modulo units.
 ## Open
 
 - Reveal window length; commit fee amount and refund rule.
-- Discoverer share (y%), and whether it is permanent or time-limited.
 - Ring-asset issuance per field-chain entry.
 - Canonical field identity for degree ≥ 3; canonical generators modulo units
   (needed before ring assets exist).
