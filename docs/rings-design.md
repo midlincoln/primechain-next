@@ -30,6 +30,26 @@ Status: in progress. Decisions are recorded as they are agreed. Plan:
 
 ## Decided
 
+### R1. Structure: a DAG of ring chains (2026-11-23)
+
+- Each ring has its own chain. A ring block contains: ring ID, previous ring
+  block hash, `depends_on` (the hash of the main-chain block that finalized
+  the prime(s) it records), the entries, and the validators' signatures.
+- Ring blocks are **final on their own**, by validator decisions batched
+  across rings and independent of main-chain blocks. Links point from rings
+  to the main chain, never the other way, and a ring entry never changes any
+  main-chain record.
+- **Snapshot (kept):** each main-chain header's `extension_root` is a Merkle
+  root over pairs (ring ID → hash of that ring's latest finalized block),
+  including the registry. It is not needed for correctness; it lets a light
+  client prove any ring fact from one main header plus short proof paths, and
+  it gives one ordered anchor for all rings at each prime.
+- Example: q = 13 splits in Q(√17). The miner submits `FIELD_ENTRY` (generator
+  (a + b√17)/2 of norm ±13). Validators check that 13 is final on the main
+  chain with 13 ≤ F, that it is the ring's next split or ramified prime (R7,
+  R9), the norm equation, and uniqueness (R10). It becomes Q(√17)'s next
+  block, and the next main header's snapshot points to it.
+
 ### R2. Validator gates, with advance notice (2026-11-23)
 
 Two policy gates, voted by validator quorum, following the institutional
@@ -89,12 +109,6 @@ together with canonical generators modulo units.
 
 ## Proposed (awaiting agreement)
 
-- **R1, structure (revised, DAG):** each ring has its own chain. Every
-  ring block links to its previous ring block and to the main-chain block it
-  depends on (the one that finalized the prime it records). Ring blocks are
-  finalized by validators in their own decisions, batched across rings and
-  independent of main-chain blocks. The main header's `extension_root` is an
-  optional snapshot of the latest finalized ring tips, for light clients.
 - **R3, eligibility:** Minkowski bound M_K ≤ F (for quadratic fields:
   D ≤ 4F² if real; 4|D| ≤ π²F² if imaginary, with a rational enclosure of
   π²). The gates control the pace.
