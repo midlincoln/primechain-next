@@ -16,10 +16,11 @@ Status: agreed 2026-11-23. Supersedes the earlier milestone list in
 Two consequences shape the plan:
 
 1. **The first engineering priority is an in-memory engine.**
-2. **The main chain never needs big integers.** Walking the integers in order,
-   the frontier cannot pass about 10¹⁵, so 64-bit integers are enough.
-   Arbitrary precision (GMP) is needed only inside certificates: rings,
-   curves and landmarks.
+2. **One proper integer type everywhere** (decision D14 in
+   `main-chain-design.md`). The in-order frontier will stay small in practice,
+   but mathematical integers use arbitrary precision with a canonical bounded
+   encoding across the main chain, rings, curves and landmarks. Amounts are
+   checked 128-bit, and counters are 64-bit.
 
 ## Roles of the layers
 

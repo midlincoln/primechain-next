@@ -92,6 +92,26 @@ separately. Its acceptance closes the block, and the chain frontier becomes p.
   gets 214,280; the prime finder gets 450,012; the validator pool gets
   100,000.
 
+### D9. Block header (2026-11-23)
+
+Signed content: version, network ID, height, previous block hash, prime,
+policy digest, validator-epoch digest, `ranges_root`, `transactions_root`,
+`state_root`, `extension_root`, and a reserved `privacy_root` (empty for now).
+The previous prime is not stored: it is the previous block's prime, which the
+previous hash commits to. The block certificate (the precommit signatures)
+sits outside the signed content.
+
+### D14. Number types (2026-11-23)
+
+| Kind | Examples | Type | Encoding |
+|---|---|---|---|
+| Mathematical integers | integers, primes, divisors, witnesses, discriminants, generators | arbitrary precision (GMP), checked | canonical minimal length-prefixed bytes; policy maximum size per field |
+| Amounts | balances, rewards, fees, supply | unsigned 128-bit, checked (overflow is rejected, never wrapped) | fixed or varint |
+| Counters | height, round, version, epoch | unsigned 64-bit | varint |
+
+One integer type is used across the main chain, rings, curves and landmarks.
+Money is not 64-bit, because total supply could pass 2⁶⁴ micro-units.
+
 ### Fixed by earlier work
 
 - **Consensus:** two-phase (prevote/precommit) rounds, lock on a quorum of
@@ -100,14 +120,10 @@ separately. Its acceptance closes the block, and the chain frontier becomes p.
   the two model tests.
 - **The engine:** one in-memory state with incremental updates, never rebuilt
   per request. See `v1-baseline-measurements.md`.
-- **Integers:** the main chain uses uint64; GMP is used only in certificates.
 - **No lottery.**
 
 ## Open (A1)
 
-- Block header fields: Merkle roots (ranges, transactions, state),
-  `extension_root`, reserved privacy roots, policy and validator-epoch
-  digests.
 - Signing domains: network ID, epoch, position, round, phase.
 - Timeouts: base value and growth per round.
 - Versioned record and transaction types.
