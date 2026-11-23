@@ -161,6 +161,23 @@ together with canonical generators modulo units.
 - Special treatment of units (for example recording fundamental units as
   evidence) would be a new versioned entry type.
 
+### R11. Ring reward split and upstream flow (2026-11-23, starting values)
+
+- Each ring entry's issuance (in the ring's own asset) is split **45% to the
+  entry's miner** (found the generator), **35% upstream**, **10% to the
+  discoverer** (R6), **10% to the validator pool**. The miner's proportion
+  matches the main-chain prime finder's 45%, so neither layer is
+  automatically more attractive.
+- **Upstream** goes to the ancestors along the DAG: for quadratic and cubic
+  rings that is only the main-chain finder of p. For nested rings (degree ≥ 4)
+  it is divided along the path, halving per step, with the remainder to the
+  main-chain finder (to be confirmed: halving or equal split). The total
+  stays 35% at any depth.
+- Only split and ramified primes have entries (R9), so inert primes pay no
+  one. A main-chain prime keeps earning for its finder each time it splits
+  in another ring.
+- The numbers are starting values, to be finalized with the economics.
+
 ## Proposed (awaiting agreement)
 
 - **Ties (reviewed 2026-11-23):** there is no global arrival order and there
