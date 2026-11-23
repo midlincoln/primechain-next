@@ -1,7 +1,6 @@
 # Main-chain design (A1)
 
-Status: in progress. Decisions are recorded as they are agreed; open items
-are listed at the end. Plan: `next-plan.md`, track A1.
+Status: A1 complete (2026-11-23). All decisions D1–D14 agreed. Plan: `next-plan.md`, track A1.
 
 ## Decided
 
@@ -101,6 +100,37 @@ The previous prime is not stored: it is the previous block's prime, which the
 previous hash commits to. The block certificate (the precommit signatures)
 sits outside the signed content.
 
+### D10. Signing domains and validator keys (2026-11-23)
+
+- Every consensus message (proposal, prevote, precommit, round change) signs:
+  a new domain tag, network ID, validator-epoch digest, position (block
+  height, plus the accepted frontier for range decisions), round, phase, and
+  the value hash or nil. v1 votes and tags are never reused.
+- **Two keys per validator** (in v1 one identity both signed and received
+  rewards):
+  - a **consensus key** (hot, on the server), used only to sign consensus
+    messages and endpoint updates;
+  - a **payout/operator key** (cold, offline), which receives validator
+    rewards, owns the reserve, and can rotate the consensus key.
+  - At registration both keys sign a binding: "this consensus key acts for
+    this payout address". Votes are verified against the consensus key, and
+    rewards are paid to the payout address. A compromised server can produce
+    bad signatures (handled by the quorum and equivocation evidence), but it
+    cannot take funds.
+
+### D11. Timeouts (2026-11-23)
+
+Round timeout: 1 s base, doubling each round, capped at 60 s, and reset after
+each decision. A timeout advances the round; it never clears safety state.
+
+### D13. Fault model, stated plainly (2026-11-23)
+
+Three validators with a quorum of 2 tolerate **one crashed or offline
+validator, not one dishonest validator**. Tolerating one Byzantine (dishonest)
+validator requires **four independent validators** (separate operators, hosts
+and keys), with quorum 3; the protocol does not change. Documentation and
+papers must say this explicitly.
+
 ### D14. Number types (2026-11-23)
 
 | Kind | Examples | Type | Encoding |
@@ -122,10 +152,14 @@ Money is not 64-bit, because total supply could pass 2⁶⁴ micro-units.
   per request. See `v1-baseline-measurements.md`.
 - **No lottery.**
 
+### D12. Versioning (2026-11-23)
+
+Every record, transaction, certificate and message type carries a version.
+Unknown versions are rejected. New evidence types and privacy transactions
+arrive as new versions, without a fork.
+
 ## Open (A1)
 
-- Signing domains: network ID, epoch, position, round, phase.
-- Timeouts: base value and growth per round.
-- Versioned record and transaction types.
-- The fault-model statement: three validators are crash-tolerant; four
-  independent validators are needed for one Byzantine fault.
+None. A1 is complete; this document is the specification input for A2 (the
+core engine).
+
