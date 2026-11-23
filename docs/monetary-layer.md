@@ -130,6 +130,41 @@ can favour them, although the spin-off is shared by all holders of those
 primes. This should be watched, but it is not necessarily harmful. Tools if
 needed: same-label loans, and market rates per label.
 
+## Cash (exploratory, 2026-11-23; still being thought through)
+
+The model follows real currency.
+
+- **Validators print, banks distribute.** Banks buy notes from their
+  validator with reserves (labeled units), wholesale. Customers withdraw and
+  deposit cash only at banks. Validators never deal with customers.
+- **Notes:** unlabeled, fixed denominations, **100% backed** by labeled units
+  in the issuing validator's reserve. They earn no spin-offs. The backing
+  keeps earning spin-offs, and that seigniorage goes to the validator
+  (dividends) and to the protocol treasury (evidence bounties).
+- **Privacy, Chaum-style:** notes are signed **blind**, so neither the bank
+  nor the validator can recognize a note later. The blind-signing key is a
+  secret walk on supersingular curves (an isogeny-based blind signature,
+  building on CSI-FiSh, which needs the certified class group of Z[√−p]).
+  **Cash can only be printed once the evidence layer has certified that
+  class group.** Chaum's original 1982 ecash used RSA blind signatures, which
+  are not post-quantum; the isogeny-based version is recent research.
+- **Payments are off chain:** notes pass directly between wallets (QR code,
+  message, NFC). On chain: issuance totals; withdrawals as account debits;
+  and, at deposit or swap, the notes' serial numbers recorded as spent, so a
+  note cannot be spent twice. An offline variant (Chaum–Fiat–Naor) reveals
+  only someone who spends the same note twice.
+- **Notes live in wallets,** like physical cash: losing an unbacked-up wallet
+  loses its notes.
+- **Note series:** old series must be exchanged by some block height, so
+  spent-serial records can be pruned.
+- **Legal tender (principle):** (1) any valid note can be **redeemed on chain
+  directly** against the issuing validator's backing, so redemption cannot
+  be blocked; (2) accepting cash deposits from anyone, for notes of any
+  validator, is a **condition of bank status**, and refusals can be reported
+  on chain.
+- **Measures, at every block:** notes in validator vaults, in bank vaults,
+  and with the public (M0); backing (= M0); deposits; M1 = cash + deposits.
+
 ## Shares and BFT independence
 
 Ordinary shares let miners influence validators, but consensus must stay
