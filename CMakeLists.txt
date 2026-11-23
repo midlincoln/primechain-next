@@ -356,6 +356,35 @@ target_link_libraries(primechain-round-change-tests
 )
 
 enable_testing()
+option(PRIMECHAIN_BUILD_NEXT "Build the PrimeChain Next engine (requires GMP)" ON)
+if(PRIMECHAIN_BUILD_NEXT)
+    find_path(PRIMECHAIN_GMPXX_INCLUDE gmpxx.h)
+    find_library(PRIMECHAIN_GMP_LIBRARY gmp)
+    find_library(PRIMECHAIN_GMPXX_LIBRARY gmpxx)
+    if(NOT (PRIMECHAIN_GMPXX_INCLUDE AND PRIMECHAIN_GMP_LIBRARY AND PRIMECHAIN_GMPXX_LIBRARY))
+        message(FATAL_ERROR "PrimeChain Next needs GMP (libgmp-dev); or configure with -DPRIMECHAIN_BUILD_NEXT=OFF")
+    endif()
+    add_library(primechain_next
+        next/src/numbers.cpp
+        next/src/codec.cpp
+        next/src/merkle.cpp
+        next/src/model.cpp
+        next/src/engine.cpp
+    )
+    set_target_properties(primechain_next PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    target_include_directories(primechain_next PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/next/include ${PRIMECHAIN_GMPXX_INCLUDE})
+    target_link_libraries(primechain_next PUBLIC primechain_core ${PRIMECHAIN_GMPXX_LIBRARY} ${PRIMECHAIN_GMP_LIBRARY})
+    target_compile_options(primechain_next PRIVATE -Wall -Wextra -Wpedantic)
+    add_executable(primechain-next-tests next/tests/next_tests.cpp)
+    set_target_properties(primechain-next-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    target_link_libraries(primechain-next-tests PRIVATE primechain_next)
+    target_compile_options(primechain-next-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME next_codec COMMAND primechain-next-tests codec)
+    add_test(NAME next_engine_rules COMMAND primechain-next-tests engine)
+    add_test(NAME next_generated_chain COMMAND primechain-next-tests chain 20000)
+    set_tests_properties(next_engine_rules next_generated_chain PROPERTIES TIMEOUT 600)
+endif()
+
 option(PRIMECHAIN_BUILD_EXPERIMENTS "Build offline PrimeChain Next experiments" OFF)
 if(PRIMECHAIN_BUILD_EXPERIMENTS)
     add_executable(primechain-prime-block-experiment
