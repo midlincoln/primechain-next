@@ -92,6 +92,44 @@ Supersedes an earlier draft with separate "deeds" per prime.
 5. Validator surplus beyond costs and dividends goes to a **protocol
    treasury** that funds evidence bounties.
 
+## Loans (2026-11-23)
+
+These are transaction types (versioned, D12) on the main ledger. Their state
+is committed by `finance_root`. None is needed for the invited testnet.
+
+1. **Simple micro-unit loan (the main type):** borrow an amount of micro-units
+   in any labels; repay the amount plus interest by block H, in any labels.
+   The interest must at least cover the lender's forgone spin-offs (the
+   expected spin-off yield per block of the units lent): opportunity cost.
+2. **Pledged loan (discount-window model):** the borrower pledges specific
+   units as collateral. They stay in the borrower's wallet, locked by a lien,
+   and **the owner keeps their spin-offs**, as the Fed leaves coupons with the
+   pledging bank. Spin-offs on pledged units are added to the collateral. On
+   default after H, the lender claims the pledged units and their locked
+   spin-offs.
+3. **Same-label loan (optional, later):** units of prime p must be repaid as
+   units of p, like securities lending.
+
+Transactions: TRANSFER, PLEDGE (signed by both parties), REPAY, CLAIM (valid
+only after H). Automatic rules: spin-off credit, locked spin-offs on pledged
+units, no transfer of locked units, and the supply invariant.
+
+**Labels are nearly equal in expectation.** For a fixed prime p, p splits in
+about half of all quadratic rings (the Kronecker symbol (D/p) is +1 for about
+half of discriminants), and every open ring records all primes up to F. So
+every prime has roughly the same expected spin-off yield; only realized
+outcomes differ. That justifies "all micro-units equal" economically, and
+simple loans with repayment in any labels are fair in expectation.
+
+**Good and bad money.** If some primes become clearly more fertile, people
+will spend barren units and hoard fertile ones (Gresham's law). Whoever
+predicts fertility well profits, and that is intended: it rewards insight.
+Note that ring **founders choose D**, and so partly decide which primes split
+in their rings (p splits iff (D/p) = +1). A founder holding certain primes
+can favour them, although the spin-off is shared by all holders of those
+primes. This should be watched, but it is not necessarily harmful. Tools if
+needed: same-label loans, and market rates per label.
+
 ## Shares and BFT independence
 
 Ordinary shares let miners influence validators, but consensus must stay
