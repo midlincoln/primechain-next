@@ -89,6 +89,31 @@ frontier. The same rule applies to real and imaginary fields, with no π.
 - Higher degrees: rule to be set in B2 (for example M_K ≤ F); the typed
   certificates (R4) allow it without a format change.
 
+### R4. Generic, typed certificates and entries (2026-11-23)
+
+- The block and registry never look inside a certificate. A registry entry
+  stores the certificate **type** (1 = quadratic; more types later), a
+  **version**, and the certificate bytes. Validators dispatch on the type.
+- **Ring ID** = hash(type ‖ degree ‖ canonical identity bytes). For quadratic
+  fields the canonical identity is D. A degree-2 field must use type 1, so the
+  same field cannot be registered twice under different types.
+- **Elements** are encoded as n integer coefficients plus a denominator,
+  relative to the field's defining polynomial. For quadratic fields that is
+  (a, b) / 2.
+- **Field-chain entries** list the prime ideals above q as (e, f, generator)
+  items, with the check Σ e·f = n.
+- **Adding a certificate type** (for example cubic) is a protocol upgrade
+  agreed by the validator community. It activates with notice at a block
+  boundary (D12 versioning, R2 notice) and changes no existing chain.
+- **Subfields:** fields of prime degree (2, 3, 5, …) have no proper subfields,
+  so cubic rings are separate trees, like quadratic ones. From degree 4
+  onward a field can contain smaller ones (for example Q(ζ₈) ⊃ Q(i), Q(√2),
+  Q(√−2)), and a prime found in the smaller ring can split further. Then a
+  ring block may carry an optional `depends_on_subfield` link to the subfield
+  ring's block for the same q. Validators check consistency: the bigger
+  ring's primes must map down (by the relative norm) to the smaller ring's
+  primes. These are the edges between rings in the DAG.
+
 ### R7. Ordering by norm (2026-11-23)
 
 - Within each ring, field-chain entries are ordered by **increasing norm** of
