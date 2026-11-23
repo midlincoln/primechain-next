@@ -114,6 +114,17 @@ frontier. The same rule applies to real and imaginary fields, with no π.
   ring's primes must map down (by the relative norm) to the smaller ring's
   primes. These are the edges between rings in the DAG.
 
+### R5. Commit–reveal for new rings only (2026-11-23)
+
+- Applies to ring registrations (`RING_COMMIT` → `RING_REVEAL`). The reveal
+  must come **within 10 blocks** after the commit is finalized, otherwise the
+  commit expires.
+- A small **refundable fee** accompanies the commit. It is returned with a
+  valid reveal and kept if the reveal is invalid or missing (anti-spam).
+- Field entries and main-chain ranges do not use commit–reveal: each prize is
+  small, and copies are handled by arrival order (D4) and one entry per q per
+  ring (R10). This can be strengthened later if copying is observed.
+
 ### R7. Ordering by norm (2026-11-23)
 
 - Within each ring, field-chain entries are ordered by **increasing norm** of
