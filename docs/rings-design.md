@@ -58,9 +58,11 @@ Reserve Banks do:
 
 - **Gate 1, new rings (global):** open or closed. While closed, `RING_COMMIT`
   is rejected on arrival, and no fee is taken.
-- **Gate 2, mining per ring:** a registered ring accepts `FIELD_ENTRY`
-  submissions only after validators allow mining on it. The discoverer share
-  accrues only while mining is allowed.
+- **Gate 2, mining per ring (amended 2026-11-23):** a ring accepted while
+  gate 1 is open is **immediately open for mining**, with no separate
+  validator approval. Validators can only **pause** mining on a ring: with
+  notice like other gate changes, or immediately as an emergency pause (below).
+  The discoverer share accrues while mining is not paused.
 - **Notice:** gate changes take effect only after a notice period of N blocks
   following the finalized vote, so miners can predict the rules (Nash
   credibility). N is a policy constant to be set.
@@ -70,6 +72,22 @@ Reserve Banks do:
 - Commitments finalized while gate 1 was open may still be revealed within
   the reveal window after it closes.
 - Gate states are part of the policy digest in every block header (D9).
+
+### R3. Eligibility: |D| ≤ F² (2026-11-23)
+
+A quadratic ring Q(√D) may be submitted when **gate 1 is open and
+√|D| ≤ F**, i.e. the integer check **|D| ≤ F²**, where F is the main-chain
+frontier. The same rule applies to real and imaginary fields, with no π.
+
+- Eligibility (policy) and proof (mathematics) are separate: the certificate
+  still gives generators for the non-inert primes up to the Minkowski bound
+  M_K. Since M_K < √|D| ≤ F, every prime a certificate refers to is already
+  on the main chain.
+- With genesis F = 3: |D| ≤ 9, so six fields — D = 5, 8, −3, −4, −7, −8,
+  i.e. Q(√5), Q(√2), Q(√−3), Q(i), Q(√−7), Q(√−2), all PIDs with empty
+  certificates.
+- Higher degrees: rule to be set in B2 (for example M_K ≤ F); the typed
+  certificates (R4) allow it without a format change.
 
 ### R7. Ordering by norm (2026-11-23)
 
@@ -109,9 +127,6 @@ together with canonical generators modulo units.
 
 ## Proposed (awaiting agreement)
 
-- **R3, eligibility:** Minkowski bound M_K ≤ F (for quadratic fields:
-  D ≤ 4F² if real; 4|D| ≤ π²F² if imaginary, with a rational enclosure of
-  π²). The gates control the pace.
 - **D4 amendment (main chain):** ties between batches with the same end are
   broken by content hash, for example the lowest hash of (submission, block
   height), instead of arrival order, so settlement never depends on network
