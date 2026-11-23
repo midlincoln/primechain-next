@@ -184,7 +184,8 @@ together with canonical generators modulo units.
 
 ### R11. Ring reward split and upstream flow (2026-11-23, starting values)
 
-- Each ring entry's issuance (in the ring's own asset) is split **45% to the
+- Each ring entry's issuance (in the same equal micro-units as the main
+  chain; one unit of account) is split **45% to the
   entry's miner** (found the generator), **35% upstream**, **10% to the
   discoverer** (R6), **10% to the validator pool**. The miner's proportion
   matches the main-chain prime finder's 45%, so neither layer is

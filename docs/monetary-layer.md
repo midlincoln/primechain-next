@@ -44,8 +44,10 @@ miner ──(buys validator shares + holds reserves)──► bank ──(enough
   the ring record (R6): **finder** (permanent; taken from the block's prime
   submission), **payee/owner** (the current holder; transferable by a signed
   transfer recorded on chain), and optional **liens**. The prime's ring
-  income (R11 upstream share) is paid to **whoever owns the bond now**, which
-  anyone can look up on chain.
+  income (R11 upstream share) is paid to **the owner of record at the moment
+  the ring entry for p is finalized** (a snapshot; earlier payments stay with
+  earlier owners, and there are no later claims). Anyone can trace the owner
+  on chain.
 - **Saving:** buying a prime means buying its bond: the right to its future
   ring income. Fertile primes (ones that split in many rings) are worth more
   as bonds, while the money itself stays one equal unit.
@@ -147,6 +149,6 @@ scenarios (slow or fast mining, few or many rings, varying κ), measuring
 inflation paths, miners' income, and bond values and yields. It will be
 built only after the founder's go-ahead.
 
-**Still open:** one unit of account (ring micro-units equal to main
-micro-units), which budgets across rings imply, or separate currencies per
-ring.
+**Decided (2026-11-23): one unit of account.** All micro-units are equal,
+whether issued by the main chain or by any ring. Ring issuance is the same
+money, so budgets across rings (options A–D) are well defined.
