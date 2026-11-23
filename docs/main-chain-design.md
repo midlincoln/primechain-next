@@ -62,9 +62,10 @@ separately. Its acceptance closes the block, and the chain frontier becomes p.
 - Main-chain transactions ride in the **closing-prime decision**. A transfer
   is final when its block closes, and its order within the block is
   preserved.
-- Ring assets (rings layer) are transferred inside **their own field chain**,
-  so each ring is its own tree of finality. The main chain only anchors them
-  through `extension_root`.
+- **All money and ownership live on the main chain's ledger** (updated
+  2026-11-23, Model 1): ring-prime micro-units are labeled assets on the main
+  ledger, credited when ring entries are finalized. Ring chains hold only the
+  mathematical evidence (see `monetary-layer.md`).
 - Consequences, accepted: finality time equals block time (seconds to a
   minute with active mining); if nobody mines, transfers wait, as in v1. A
   transaction-only fallback decision can be added later without changing the

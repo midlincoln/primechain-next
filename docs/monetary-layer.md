@@ -35,29 +35,47 @@ miner ──(buys validator shares + holds reserves)──► bank ──(enough
   enough for the reserve". Four or more independent validators give real
   Byzantine tolerance (D13).
 
-## Money and bonds are separate (2026-11-23)
+## Money: labeled micro-units; splits are spin-offs (2026-11-23)
 
-- **Money:** all micro-units stay **equal in value** and fungible, as in v2.
-  Payments need no prices, and lending against cash stays free of price
-  oracles.
-- **Prime bonds:** each main-chain prime has a **bond record**, the twin of
-  the ring record (R6): **finder** (permanent; taken from the block's prime
-  submission), **payee/owner** (the current holder; transferable by a signed
-  transfer recorded on chain), and optional **liens**. The prime's ring
-  income (R11 upstream share) is paid to **the owner of record at the moment
-  the ring entry for p is finalized** (a snapshot; earlier payments stay with
-  earlier owners, and there are no later claims). Anyone can trace the owner
-  on chain.
-- **Saving:** buying a prime means buying its bond: the right to its future
-  ring income. Fertile primes (ones that split in many rings) are worth more
-  as bonds, while the money itself stays one equal unit.
+Supersedes an earlier draft with separate "deeds" per prime.
+
+- **Every prime is an asset with micro-units:** main-chain primes (2, 3, 5, …)
+  and ring primes (prime ideals in rings, e.g. the primes above 13 in
+  Q(√17)). Wallets hold concrete primes, as in v1. **All micro-units have
+  equal value**; the label records which prime they belong to.
+- **A split is a spin-off.** When main-chain prime q splits or ramifies in a
+  ring K, new micro-units of K's primes above q are issued (amount set by K's
+  policy) and divided by R11: 45% to the entry's miner, 35% upstream, 10% to
+  the founder, 10% to validators. The **upstream share goes pro rata to the
+  holders of q's micro-units at the moment the entry is finalized**. q itself
+  is unchanged; its holders keep their q-units and additionally receive
+  units of the new primes.
+- **Conjugates are distinct assets.** When q splits into x and y (different
+  prime ideals), they are two assets, each receiving half of the split's
+  issuance. There is still one entry, one proof and one miner reward per
+  split (R8). They must be distinguishable because in larger rings they can
+  have different futures. Which one is x is fixed by the canonical-generator
+  rule.
+- **Nesting:** when a ring prime splits further in a larger ring, its holders
+  receive the spin-off, and the upstream share is divided along the path down
+  to the main-chain prime (R11). Assets form a family tree that mirrors the
+  factorization.
+- **Ledger:** all money and ownership live on the main chain's ledger
+  (committed by `finance_root`). Ring chains hold only the mathematical
+  evidence. Pro-rata payouts use a per-unit accumulator, so the cost does not
+  depend on the number of holders.
+- **Supply invariant,** checked every block: the change in total supply
+  equals everything issued in that block (main reward plus ring payouts
+  credited). Fees move money and never create it.
+- **Saving:** holders of fertile primes (ones that split in many rings)
+  accumulate more units over time.
 
 ## Instruments
 
 | Instrument | What it is |
 |---|---|
 | Validator ordinary shares | ownership of a validator, with votes on the validator as an institution |
-| **Prime bonds** | income from a main-chain prime: its upstream share each time it splits or ramifies in a ring (R11) |
+| **Prime holdings** | micro-units of a prime; they receive spin-off units whenever it splits or ramifies in a ring |
 | **Ring bonds** | income from a ring: the founder share (R6) |
 | Loans | on-chain objects: lender, borrower, amount, schedule by block height, collateral or lien |
 | Reserves | units a bank keeps locked at its validator |

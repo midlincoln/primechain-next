@@ -160,8 +160,10 @@ format covers all of the options.
 ### R8. Conjugates: one entry per split prime (2026-11-23)
 
 When q splits into π and π̄, one entry is recorded with **one canonical
-generator**; the conjugate is derived from it. There is one reward per split
-q, since finding one generator finds both. The canonical choice of which
+generator**; the conjugate is derived from it. There is one miner reward per
+split q, since finding one generator finds both. As **assets**, π and π̄ are
+distinct (different prime ideals, possibly different futures in larger
+rings), and each receives half of the split's issuance. The canonical choice of which
 conjugate (for example b > 0 in Q(i), so 2 + i rather than 2 − i) is fixed
 together with canonical generators modulo units.
 
@@ -191,9 +193,8 @@ together with canonical generators modulo units.
   matches the main-chain prime finder's 45%, so neither layer is
   automatically more attractive.
 - **Upstream** goes to the ancestors along the DAG: for quadratic and cubic
-  rings that is only the main-chain prime p's bond: paid to the **current
-  owner (payee) of p's prime bond** (`monetary-layer.md`), initially its
-  finder. For nested rings (degree ≥ 4)
+  rings that is the **holders of p's micro-units, pro rata, at the moment the
+  entry is finalized** (spin-off model, `monetary-layer.md`). For nested rings (degree ≥ 4)
   it is divided along the path, halving per step, with the remainder to the
   main-chain finder (to be confirmed: halving or equal split). The total
   stays 35% at any depth.
