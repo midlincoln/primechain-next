@@ -64,6 +64,7 @@ public:
     std::uint64_t minFee() const { return min_fee_; }
     std::size_t pendingGovernanceCount() const { return pending_governance_.size(); }
     std::size_t scheduledChanges() const { return scheduled_.size(); }
+    std::size_t readyCount() const { return ready_.size(); }  // recorded "ready" messages
     std::size_t votesFor(const Hash256& proposal_id) const;
 
     // Hooks for consensus (A3-1): the proposer builds a value from its queues; every validator
@@ -72,6 +73,7 @@ public:
     struct PrimeContents {
         std::vector<Transfer> transfers;
         std::vector<GovernanceTx> governance;
+        Hash256 header_hash{};  // hash of the sealed header, so a certificate binds the block (F7)
     };
     std::optional<RangeSubmission> bestPendingRange() const;  // highest end, ties by arrival
     bool applyDecidedRange(const RangeSubmission& range, std::string& error);
@@ -131,6 +133,7 @@ private:
                                        const std::vector<GovernanceTx>& governance, bool strict, std::string& error);
     bool checkGovernanceForm(const GovernanceTx& tx, std::string& error) const;
     bool applyGovernance(const GovernanceTx& tx, std::string& error);
+    bool isScheduled(const Hash256& proposal_id) const;
     void activateScheduled(std::uint64_t height);  // changes effective at `height` take effect now
     Hash256 governanceDigest() const;
     Engine scratch() const;                          // detached copy for dry runs (no store)
@@ -168,7 +171,13 @@ private:
         std::set<Hash256> voters;                             // sha3 of voters' consensus keys
     };
     std::map<Hash256, Tally> tallies_;                        // proposal id -> votes so far
-    std::map<Hash256, std::uint64_t> ready_;                  // proposal id -> height where "ready" was included
+    struct Ready {
+        std::uint64_t height{0};  // where the "ready" message was included
+        std::uint64_t expiry{0};    // the proposal's expiry and sequence: the entry is pruned once the
+        std::uint64_t sequence{0};  // proposal can no longer pass and is not scheduled
+    };
+    bool readyDead(const Hash256& id, std::uint64_t expiry, std::uint64_t sequence, std::uint64_t height) const;
+    std::map<Hash256, Ready> ready_;                          // proposal id -> ready message
     std::vector<std::pair<std::uint64_t, GovernanceProposal>> scheduled_;  // (effective height, proposal)
     std::uint64_t min_fee_{1};
     std::uint64_t last_sequence_{0};

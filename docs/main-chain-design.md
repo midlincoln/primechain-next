@@ -308,12 +308,16 @@ A3-1 to A3-3 and the model test. Choices the design left open, for review:
    where candidates is the active set (in validator order) minus validators
    with ≥ M missed turns; if that is empty, nobody is skipped. M is
    `Policy::proposer_skip_after` (3).
-3. **What a certificate certifies:** the value hash of an instance, not a
-   block hash. The block is a deterministic function of the decided values,
-   and the embedded previous certificates chain all values together. A light
-   client that wants a certified header hash would need the sealed header's
-   hash added to the prime value (the dry run that checks a prime value
-   already computes it). **Open for review.**
+3. **What a certificate certifies (decided 2026-11-24):** the value hash
+   of an instance. A prime value includes the **hash of the sealed block
+   header**, so the certificate of a block's prime decision certifies that
+   header directly: a block fetched from anyone is checked against its
+   certificate without re-executing (F7), and light clients can follow
+   certified headers. The proposer takes the hash from its dry run; every
+   validator recomputes it in `checkPrimeValue` and prevotes nil on a
+   mismatch, and sealing a decided value checks it again. Range values
+   carry no header (they seal no block); the embedded previous certificates
+   chain them to the next prime decision.
 4. **Proposer's choice:** a valid closing prime first (a valid prime means
    the gap is covered), otherwise the highest-end pending batch. Nil is
    only a vote. A proposer with nothing to propose still runs the propose
@@ -339,8 +343,14 @@ A3-1 to A3-3 and the model test. Choices the design left open, for review:
 7. **Ready message:** a `GovernanceTx` of kind Ready, signed by the new
    consensus key over the proposal ID, must be included at a height below H.
    At H the binding (both keys) is checked again; a duplicate consensus key is
-   ignored. Ready entries of proposals that never pass are kept (small,
-   unbounded; to be pruned at expiry later).
+   ignored. Each ready entry stores the proposal's expiry and sequence. An
+   entry is pruned as soon as its proposal **can no longer pass** (expired,
+   or its sequence is used up by a passed proposal) and is not scheduled;
+   expired entries go at the same block as the lapsed tally. So the
+   governance state, state root and snapshots stay bounded. A ready message
+   for such a proposal is rejected at inclusion and dropped from the
+   mempool, as is a duplicate of a recorded one. A passed proposal keeps
+   its ready entry until it takes effect, even past its expiry.
 8. **Block format:** blocks gain a governance list after the transfers;
    `transactions_root` covers transfers, then governance transactions. The
    governance state (minimum fee, last sequence, tallies, ready messages,

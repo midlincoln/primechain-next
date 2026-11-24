@@ -135,9 +135,11 @@ Hash256 Engine::governanceDigest() const {
         for (const auto& v : tally.voters) w.hash(v);
     }
     w.varint(ready_.size());
-    for (const auto& [id, height] : ready_) {
+    for (const auto& [id, ready] : ready_) {
         w.hash(id);
-        w.varint(height);
+        w.varint(ready.height);
+        w.varint(ready.expiry);
+        w.varint(ready.sequence);
     }
     w.varint(scheduled_.size());
     for (const auto& [height, proposal] : scheduled_) {
@@ -370,6 +372,16 @@ bool Engine::submitGovernance(const GovernanceTx& tx, std::string& error) {
     return true;
 }
 
+bool Engine::isScheduled(const Hash256& id) const {
+    return std::any_of(scheduled_.begin(), scheduled_.end(), [&](const auto& e) { return proposalId(e.second) == id; });
+}
+
+// A ready message is useless once its proposal can no longer pass (expired at `height`, or its
+// sequence is used up) and it is not waiting to take effect.
+bool Engine::readyDead(const Hash256& id, std::uint64_t expiry, std::uint64_t sequence, std::uint64_t height) const {
+    return (expiry < height || sequence <= last_sequence_) && !isScheduled(id);
+}
+
 // State checks at inclusion in the block being sealed (height_ + 1).
 bool Engine::applyGovernance(const GovernanceTx& tx, std::string& error) {
     const std::uint64_t h = height_ + 1;
@@ -377,7 +389,8 @@ bool Engine::applyGovernance(const GovernanceTx& tx, std::string& error) {
     const auto& p = tx.proposal;
     if (tx.kind == GovernanceTxKind::Ready) {
         if (ready_.count(id)) { error = "governance: ready already recorded"; return false; }
-        ready_.emplace(id, h);
+        if (readyDead(id, p.expiry_height, p.sequence, h)) { error = "governance: ready for a proposal that cannot pass"; return false; }
+        ready_.emplace(id, Ready{h, p.expiry_height, p.sequence});
         return true;
     }
     if (p.validator_set_digest != validatorEpochDigest()) { error = "governance: vote for another validator set"; return false; }
@@ -414,7 +427,7 @@ void Engine::activateScheduled(std::uint64_t height) {
             const Bytes payload = validatorBindingPayload(policy_.network_id, v);
             const bool duplicate = std::any_of(validators_.begin(), validators_.end(),
                                                [&](const ValidatorRecord& x) { return x.consensus_key == v.consensus_key; });
-            if (ready != ready_.end() && ready->second < height && !duplicate && v.version == kVersion1 &&
+            if (ready != ready_.end() && ready->second.height < height && !duplicate && v.version == kVersion1 &&
                 v.payout_address == primechain::crypto::addressFromProtocolPublicKey(v.payout_key) &&
                 verify(v.consensus_key, payload, v.consensus_signature) && verify(v.payout_key, payload, v.payout_signature)) {
                 validators_.push_back(v);
@@ -549,6 +562,8 @@ std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, const 
         }
     }
     std::erase_if(tallies_, [&](const auto& entry) { return entry.second.proposal.expiry_height <= height_; });  // lapse
+    // Ready messages of proposals that lapsed without passing are pruned with their tallies.
+    std::erase_if(ready_, [&](const auto& e) { return readyDead(e.first, e.second.expiry, e.second.sequence, height_ + 1); });
     // 2. D8 rewards: 45% prime finder, 45% per composite, 10% validator pool; remainder to the finder.
     const Integer& p = accepted.prime;
     const std::uint64_t total = reward(policy_, p);
@@ -720,9 +735,11 @@ Bytes Engine::encodeState() const {
         for (const auto& v : tally.voters) w.hash(v);
     }
     w.varint(ready_.size());
-    for (const auto& [id, height] : ready_) {
+    for (const auto& [id, ready] : ready_) {
         w.hash(id);
-        w.varint(height);
+        w.varint(ready.height);
+        w.varint(ready.expiry);
+        w.varint(ready.sequence);
     }
     w.varint(scheduled_.size());
     for (const auto& [height, proposal] : scheduled_) {
@@ -833,9 +850,9 @@ bool Engine::decodeState(const Bytes& data, std::string& error) {
     if (!r.varint(count)) return fail("bad ready set");
     for (std::uint64_t i = 0; i < count; ++i) {
         Hash256 id{};
-        std::uint64_t height = 0;
-        if (!r.hash(id) || !r.varint(height)) return fail("bad ready entry");
-        ready_.emplace(id, height);
+        Ready ready;
+        if (!r.hash(id) || !r.varint(ready.height) || !r.varint(ready.expiry) || !r.varint(ready.sequence)) return fail("bad ready entry");
+        ready_.emplace(id, ready);
     }
     if (!r.varint(count)) return fail("bad schedule");
     for (std::uint64_t i = 0; i < count; ++i) {
@@ -981,15 +998,17 @@ std::optional<Engine::PrimeContents> Engine::buildPrimeContents(const PrimeSubmi
     if (!prime.public_key.empty() && !sim.registerKey(prime.provider, prime.public_key, error)) return std::nullopt;
     const auto block = sim.closeAccepted(acceptedFrom(prime), pending_transfers_, pending_governance_, /*strict=*/false, error);
     if (!block) return std::nullopt;
-    return PrimeContents{block->transfers, block->governance};
+    return PrimeContents{block->transfers, block->governance, blockHash(block->header)};
 }
 
 bool Engine::checkPrimeValue(const PrimeSubmission& prime, const PrimeContents& contents, std::string& error) const {
     Engine sim = scratch();
     if (!sim.validatePrime(prime, error)) return false;
     if (!prime.public_key.empty() && !sim.registerKey(prime.provider, prime.public_key, error)) return false;
-    return sim.closeAccepted(acceptedFrom(prime), contents.transfers, contents.governance, /*strict=*/true, error)
-        .has_value();
+    const auto block = sim.closeAccepted(acceptedFrom(prime), contents.transfers, contents.governance, /*strict=*/true, error);
+    if (!block) return false;
+    if (blockHash(block->header) != contents.header_hash) { error = "prime value: header hash does not match"; return false; }
+    return true;
 }
 
 std::optional<Block> Engine::applyDecidedPrime(const PrimeSubmission& prime, const PrimeContents& contents,
@@ -998,6 +1017,10 @@ std::optional<Block> Engine::applyDecidedPrime(const PrimeSubmission& prime, con
     if (!prime.public_key.empty() && !registerKey(prime.provider, prime.public_key, error)) return std::nullopt;
     auto block = closeAccepted(acceptedFrom(prime), contents.transfers, contents.governance, /*strict=*/true, error);
     if (!block) return std::nullopt;
+    if (blockHash(block->header) != contents.header_hash) {  // checked before deciding; a mismatch here is a bug
+        error = "decided prime value: header hash does not match the sealed block";
+        return std::nullopt;
+    }
     // Mempool revalidation against the new finalized state (F9): drop what is now included or stale.
     std::set<Hash256> included;
     for (const auto& t : block->transfers) included.insert(sha3(encode(t)));
@@ -1008,7 +1031,10 @@ std::optional<Block> Engine::applyDecidedPrime(const PrimeSubmission& prime, con
     for (const auto& g : block->governance) included_gov.insert(sha3(encode(g)));
     std::erase_if(pending_governance_, [&](const GovernanceTx& g) {
         return included_gov.count(sha3(encode(g))) ||
-               (g.kind == GovernanceTxKind::Vote && (g.proposal.expiry_height <= height_ || g.proposal.sequence <= last_sequence_));
+               (g.kind == GovernanceTxKind::Vote && (g.proposal.expiry_height <= height_ || g.proposal.sequence <= last_sequence_)) ||
+               (g.kind == GovernanceTxKind::Ready &&
+                (ready_.count(proposalId(g.proposal)) ||
+                 readyDead(proposalId(g.proposal), g.proposal.expiry_height, g.proposal.sequence, height_ + 1)));
     });
     pending_primes_.clear();
     return block;

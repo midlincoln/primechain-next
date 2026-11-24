@@ -83,6 +83,7 @@ Bytes encode(const Value& v) {
         for (const auto& t : v.contents.transfers) w.bytes(primechain::next::encode(t));
         w.varint(v.contents.governance.size());
         for (const auto& g : v.contents.governance) w.bytes(primechain::next::encode(g));
+        w.hash(v.contents.header_hash);  // the certificate binds the sealed block header (F7)
     }
     w.u8(v.previous ? 1 : 0);
     if (v.previous) w.bytes(encode(*v.previous));

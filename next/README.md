@@ -111,8 +111,10 @@ a higher round on n − q + 1 messages from it. q = ceil(2n/3).
   transactions (built by a dry run of block sealing). Every validator checks a
   value objectively against its own engine (`validateRange`,
   `checkPrimeValue`) and applies a decided one with `applyDecidedRange` /
-  `applyDecidedPrime`, so engines stay bit-identical. Nil is a vote, never a
-  decision.
+  `applyDecidedPrime`, so engines stay bit-identical. A prime value carries
+  the hash of the block header it seals; validators recompute it and reject
+  a mismatch, so a prime decision's certificate certifies the block header
+  (F7). Nil is a vote, never a decision.
 - **Votes and proposals** sign the D10 domain: tag, network ID, validator-set
   digest, (h, k, r), phase, value hash or nil (ML-DSA with the consensus key).
 - **Certificates:** {h, k, r, value hash, signer bitmap, precommit signatures
@@ -124,8 +126,9 @@ a higher round on n − q + 1 messages from it. q = ceil(2n/3).
   validators with ≥ M missed proposer turns (M = `Policy::proposer_skip_after`,
   3); nobody is skipped if everybody would be.
 - **Governance (A3-2):** `GovernanceTx` votes and "ready" messages ride in
-  prime decisions after the transfers and are tallied on chain; see the
-  design notes for the exact rules.
+  prime decisions after the transfers and are tallied on chain; ready
+  entries of proposals that lapse without passing are pruned at expiry. See
+  the design notes for the exact rules.
 - **Restart:** `Node::durable()` is the state to persist before sending
   (decisions of the open block, certificates, skip counters, lock, valid
   value, round, and every vote and proposal already signed, which are
@@ -148,7 +151,8 @@ Results (1 vCPU shared with a live validator, `nice -n 19`):
 | `next_consensus_partition` | n = 4, 20% loss: a 2\|2 split decides nothing, a 3\|1 split continues, the isolated node restarts from its Store and catches up |
 | `next_consensus_byzantine4` | n = 4 with one equivocator: no conflicting decisions, evidence at honest nodes |
 | `next_consensus_byzantine3` | n = 3 with one equivocator: the known fork happens; evidence extracted from the two certificates |
-| `next_consensus_governance` | lapse; fee 1 → 7 after notice; add a validator with its ready message (it then signs); remove it; an add without ready never activates; certificates verified across set changes; restart from a snapshot keeps governance state |
+| `next_consensus_governance` | lapse; fee 1 → 7 after notice; add a validator with its ready message (it then signs); remove it; an add without ready never activates; a lapsed proposal's ready entry is pruned on every node; certificates verified across set changes; restart from a snapshot keeps governance state |
+| `next_consensus_header` | n = 4, a Byzantine proposer forges the header hash in its prime values: the engine rejects them, they are never decided, and every certified header hash matches the sealed block |
 | `next_consensus_retention` | K = 10, W = 5: certificates kept exactly at checkpoints and in the window |
 | `next_consensus_fuzz` | 20 seeds, n = 3–5, loss up to 29%, delays up to 420 ms, 59 partitions, 37 crash/restarts, 3,636 instances: no conflicts, progress after healing |
 

@@ -1,5 +1,5 @@
 // Tests for PrimeChain Next A3.1: the consensus core on a simulated network.
-// Usage: primechain-next-consensus-tests chain|crash|g2|partition|byzantine4|byzantine3|governance|retention|fuzz [n]
+// Usage: primechain-next-consensus-tests chain|crash|g2|partition|byzantine4|byzantine3|governance|retention|header|fuzz [n]
 #include "primechain/crypto/signature.hpp"
 #include "primechain_next/consensus.hpp"
 #include "primechain_next/merkle.hpp"
@@ -11,6 +11,7 @@
 #include <map>
 #include <queue>
 #include <random>
+#include <set>
 #include <stdexcept>
 
 using namespace primechain::next;
@@ -772,6 +773,25 @@ void governanceTest() {
     require(all([](const Engine& e) { return e.validators().size() == 3; }), "an add without a ready message does not activate");
     net.requireConsistent("governance");
 
+    // 6. Add F with a ready message but only one vote: the proposal lapses, and its ready entry is pruned
+    //    from every node's governance state (and so from the state root and snapshots).
+    const auto f_val = makeValidator(network);
+    auto add_f = proposal(GovernanceKind::ValidatorAdd, 6, 0);
+    add_f.validator = f_val.record;
+    add_f.expiry_height = net.reference()->engine().height() + 6;
+    require(all([](const Engine& e) { return e.readyCount() == 0; }), "no ready entries before F");
+    vote(add_f, {0});
+    net.gossip.push_back({governanceTx(f_val.consensus, add_f, GovernanceTxKind::Ready), 50});
+    bool recorded = false;
+    run([&] {
+        recorded |= net.reference()->engine().readyCount() == 1;
+        return recorded;
+    }, "F's ready message is recorded");
+    run([&] { return net.reached(add_f.expiry_height + 2); }, "F's proposal lapses");
+    require(all([](const Engine& e) { return e.readyCount() == 0 && e.validators().size() == 3; }),
+            "ready entry of a lapsed proposal is pruned");
+    net.requireConsistent("ready pruning");
+
     // Certificates at the two set changes are retained beyond the window and verify against their sets.
     const auto& changes = net.nodes[0]->setChangeHeights();
     require(changes.size() == 2, "two validator-set changes recorded");
@@ -793,8 +813,59 @@ void governanceTest() {
     require(net.nodes[0]->engine().minFee() == 7 && net.nodes[0]->engine().validators().size() == 3,
             "restored governance state");
     std::cout << "consensus governance: PASS (lapse, fee 1->7 after notice, add D with ready at h=" << h_add
-              << " and D signs, remove D at h=" << h_removed << ", add without ready ignored; " << verified
+              << " and D signs, remove D at h=" << h_removed << ", add without ready ignored, lapsed ready pruned; " << verified
               << " certificates verified across set changes; " << checks << " checks)\n";
+}
+
+// ---------------------------------------------------------------- (g2) the certificate binds the block header
+// A Byzantine proposer (n = 4) signs prime values whose header hash differs from the block they
+// seal. Honest validators recompute the header in their dry run, prevote nil, and never decide
+// such a value; every decided prime value names the header the honest engines actually sealed.
+void headerTest() {
+    Options o;
+    o.validators = 4;
+    o.chunk = 7;  // several ranges per block, so prime instances are spread over all proposers
+    Harness net(o);
+    const std::uint32_t byz = 3;
+    std::set<Hash256> forged;
+    std::size_t own_checks = 0;
+    net.tamper[byz] = [&](Harness& h, const Outgoing& out, std::vector<std::pair<std::uint32_t, Message>>& sends) {
+        Message m = out.message;
+        if (const auto* p = std::get_if<Proposal>(&out.message); p && p->value.kind == Value::Kind::Prime) {
+            const Engine& e = h.nodes[byz]->engine();
+            std::string error;
+            require(e.checkPrimeValue(p->value.prime, p->value.contents, error), "honest prime value checks: " + error);
+            Proposal bad = *p;
+            bad.value.contents.header_hash[0] ^= 1;
+            require(!e.checkPrimeValue(bad.value.prime, bad.value.contents, error) &&
+                        error.find("header hash") != std::string::npos,
+                    "a prime value with a wrong header hash is rejected by the engine");
+            ++own_checks;
+            h.nodes[byz]->signProposal(bad);
+            forged.insert(valueHash(bad.value));
+            m = bad;
+        }
+        for (const auto to : h.peers(byz, out)) sends.emplace_back(to, m);
+    };
+    require(net.runUntil([&] { return net.reached(12) && !forged.empty(); }, 100'000'000),
+            "progress, with at least one forged prime proposal");
+    net.requireConsistent("header");
+    for (std::uint32_t i = 0; i < 3; ++i)
+        for (const auto& [id, d] : net.nodes[i]->decisions())
+            require(!forged.count(d.certificate.value), "a value with a forged header hash is never decided");
+    // Every sealed block's header hash is the one certified in its prime value.
+    std::map<std::uint64_t, Hash256> sealed;
+    for (const auto& b : net.nodes[0]->engine().blocks()) sealed[b.header.height] = blockHash(b.header);
+    std::size_t matched = 0;
+    for (const auto& [id, d] : net.nodes[0]->decisions())
+        if (d.value.kind == Value::Kind::Prime && sealed.count(id.h)) {
+            require(sealed.at(id.h) == d.value.contents.header_hash, "certified header hash matches the block");
+            ++matched;
+        }
+    require(matched > 0, "some certified headers compared");
+    std::cout << "consensus header: PASS (n=4, " << forged.size() << " forged prime proposals rejected, " << own_checks
+              << " engine checks, " << matched << " certified headers matched; height " << net.minHeight() << "; "
+              << checks << " checks)\n";
 }
 
 // ---------------------------------------------------------------- (h) certificate retention
@@ -899,10 +970,11 @@ int main(int argc, char** argv) {
         else if (mode == "byzantine3") byzantine3Test();
         else if (mode == "governance") governanceTest();
         else if (mode == "retention") retentionTest();
+        else if (mode == "header") headerTest();
         else if (mode == "fuzz") fuzzTest(arg ? arg : 20);
         else {
             std::cerr << "usage: primechain-next-consensus-tests chain|crash|g2|partition|byzantine4|byzantine3|"
-                         "governance|retention|fuzz [n]\n";
+                         "governance|retention|header|fuzz [n]\n";
             return 2;
         }
     } catch (const std::exception& e) {
