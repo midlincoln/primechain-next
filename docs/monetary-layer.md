@@ -22,12 +22,13 @@ miner ──(buys validator shares + holds reserves)──► bank ──(enough
                                                      lends to customers                           discount window
 ```
 
-- **Validators** (regional Reserve Banks): run consensus; are owned through
-  **ordinary (voting) shares**; run the discount window.
+- **Validators** (regional Reserve Banks): run consensus; are owned by
+  their member banks through **membership stock** (see "Banks" below); run
+  the discount window.
 - **Banks** (member banks): any miner becomes a bank **automatically** by
-  meeting on-chain criteria (holding at least S validator shares, required
-  reserves, delinquency below a limit). Nobody approves it. Losing the
-  criteria suspends new lending and pledging.
+  meeting on-chain criteria (subscribing to membership stock of one
+  validator, required reserves, delinquency below a limit). Nobody approves
+  it. Losing the criteria suspends new lending and pledging.
 - **Customers:** ordinary users who borrow from banks.
 - **Path to BFT:** banks are the pool of new, independent validators. Bank →
   validator requires capital and criteria and is activated by quorum with
@@ -74,7 +75,7 @@ Supersedes an earlier draft with separate "deeds" per prime.
 
 | Instrument | What it is |
 |---|---|
-| Validator ordinary shares | ownership of a validator, with votes on the validator as an institution |
+| Validator membership stock | Fed-style: bought at par by member banks (6% of capital, half paid in), not transferable, capped dividend, elects some of the validator's directors |
 | **Prime holdings** | micro-units of a prime; they receive spin-off units whenever it splits or ramifies in a ring |
 | **Ring bonds** | income from a ring: the founder share (R6) |
 | Loans | on-chain objects: lender, borrower, amount, schedule by block height, collateral or lien |
@@ -202,17 +203,71 @@ The model follows real currency.
   physical cash (paper QR notes with online swap, or secure-hardware cards)
   is a separate project.
 
+## Banks: membership and evolution (2026-11-24)
+
+Decided: **mimic the Federal Reserve as closely as possible.**
+
+### Membership stock
+
+A member bank of the Fed must buy stock in its regional Reserve Bank. We copy
+the rules:
+
+| Fed rule | PrimeChain |
+|---|---|
+| Subscription equal to **6% of the member bank's capital and surplus** | 6% of the bank's **capital** (units it owns itself, excluding depositors' fund shares); the percentage is a governance parameter, starting at 6% |
+| **Half paid in, half callable** by the Reserve Bank | 3% paid in units on registration; 3% callable by quorum governance with notice; not paying a call suspends membership |
+| Par value, **cannot be sold, transferred or pledged** | fixed par in units; no share market; returned at par when the bank leaves or loses membership |
+| Subscription **adjusted when capital changes** (15% threshold) | recomputed from chain data at epoch boundaries; the bank tops up or is refunded when its capital moves by 15% or more |
+| **Capped dividend:** 6% a year; large banks get the lesser of 6% and the 10-year Treasury yield | capped dividend per 1,000 blocks from the validator's income; large banks get the lesser of the cap and the **base rate** (expected spin-off yield, our Treasury analogue). Excess stays with the validator / protocol treasury |
+| Member banks **elect directors** (Class A: bankers, Class B: public); Class C appointed by the Board of Governors | member banks of a validator elect part of its board; the rest is appointed by the validators jointly (our Board of Governors). The board chooses the operator; consensus keys stay with the operator (D10) |
+| Stock gives **no control over monetary policy** | stock never adds consensus weight; policy levers (κ, y, z, rates) are set by validator governance |
+| Membership gives access to the **discount window and cash services** | access to the validator's loans (pledged primes as collateral) and the right to run a cash desk |
+
+Each bank is a member of **one validator** (the Fed's district), chosen at
+registration. Paid-in capital is the validator's **reserve**, which it lends
+back to member banks through the discount window.
+
+### Stages
+
+1. **Stage 0, at launch: bank = bond portfolio.** Assets: prime and ring-prime
+   holdings plus membership stock. Income: spin-offs (protocol-created
+   interest) and dividends. No deposits, no loans.
+2. **Stage 1: deposits as on-chain fund shares.** Depositors buy a pro-rata
+   share of the bank's portfolio and receive their fraction of its spin-offs,
+   computed by the protocol (per-unit accumulator). Purpose: diversify
+   spin-off luck across thousands of primes.
+3. **Stage 2: lending from deposits (full reserve)**, together with
+   **fixed-rate deposits**, since both put the bank at risk; the chain checks
+   reserves against promises.
+4. **Stage 3, only if demand justifies it:** fractional-reserve deposit
+   tokens with protocol-enforced reserve ratios; validators as lenders of
+   last resort.
+
+Note: in PrimeChain **money is created by the protocol** (spin-offs, steered by
+κ and y), not by bank lending. Banks start as holders of interest-bearing
+money; credit creation is a deliberate, later step.
+
+### Infrastructure: the chain is the bank's back office
+
+Money rules (membership, deposits, fund shares, loans, reserves, dividends)
+run on chain, so depositors need not trust a bank's database. A bank's own
+software stays thin: the reference client's single executable gets a
+`bank` mode (full node, ~30 MB RAM; hot operational key plus an offline cold
+treasury key, as for validators; customer API; later the cash desk). Stages
+0–1 need only a wallet; the cash desk is the first piece that needs a
+server.
+
 ## Shares and BFT independence
 
-Ordinary shares let miners influence validators, but consensus must stay
+Membership stock lets banks influence validators, but consensus must stay
 independent:
 
 - one validator, one consensus vote, always; shares never add consensus
   weight;
 - concentration limits: no holder above X% of any validator, and limits on
   cross-ownership (nobody controls more than one validator);
-- shareholders elect a validator's operator, but consensus keys stay with
-  the operator (D10). A change of control is a key rotation with notice.
+- the board (partly elected by member banks) chooses a validator's operator,
+  but consensus keys stay with the operator (D10). A change of control is a key rotation with notice.
 
 Today all validators are run by the founder. This structure is the path away
 from that dependence.
