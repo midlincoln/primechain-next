@@ -233,6 +233,43 @@ request.
   by the expiry height, the proposal lapses.
 - Votes count only for the validator set named by their digest.
 
+### A3-3. Certificates and validator-set changes (2026-11-24)
+
+- **Storage:** a block's certificate (bitmap of signers plus their
+  precommit signatures, in validator order; any valid quorum is acceptable)
+  is not part of the block's identity (D9). Kept permanently: certificates at
+  every validator-set change and a checkpoint every K = 1,000 blocks. Kept
+  for the last 1,000 blocks: every certificate. All other certificates are
+  pruned; blocks are never pruned. One certified block vouches for its whole
+  history through the hash chain. About 13 MB of certificates per million
+  blocks, instead of 6.6 GB.
+- **Transitions:** a set change is voted by the old set (A3-2) and takes
+  effect at height H after notice. The last block before H (whose state
+  contains the new set) is certified by the old set, and the first block at
+  H by the new set; both certificates are kept permanently, forming a chain
+  of trust from genesis.
+- **Liveness proof for newcomers:** an added validator counts only after an
+  on-chain "ready" message signed with its new consensus key arrives before
+  H; otherwise the inclusion does not activate.
+- **Set binding:** every vote and certificate names its validator-set
+  digest and is checked against the set active at that height, taken from
+  certified state. A removed validator can never form a quorum alone.
+- **Losing validators:** any quorum decides, so one lost validator cannot
+  stall the chain. The proposer rotation **skips a validator after M
+  consecutive missed proposer turns** (deterministic from certificates:
+  decisions in round > 0), until it signs again. A lost hot key is replaced
+  by rotating in a new consensus key with the cold payout key (D10), with no
+  vote needed. Cold payout keys never live on validator servers. Losing both
+  keys means removal by vote. Losing a quorum (two of three) cannot be
+  handled by any protocol, so a documented emergency procedure is needed:
+  a new set announced by the operators, restarting from the last certified
+  block.
+- **Old keys:** permanent checkpoints held by peers guard against forged
+  old histories if an entire old set's keys leak.
+- **Rule:** no single validator is ever indispensable. Every feature is
+  checked against it (for example, cash from a lost validator remains
+  redeemable on chain from its backing).
+
 ### D14. Number types (2026-11-23)
 
 | Kind | Examples | Type | Encoding |
