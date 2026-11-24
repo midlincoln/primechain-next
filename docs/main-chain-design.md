@@ -89,6 +89,11 @@ separately. Its acceptance closes the block, and the chain frontier becomes p.
   can change it without changing the block format.
 - Split: 45% to the prime finder, 45% to composites, 10% to the validator
   pool.
+  **Revised 2026-11-24: the 10% validator share is dropped.** Validators earn like
+  Reserve Banks (seigniorage on the primes backing cash, discount-window
+  interest, fees, spin-offs on paid-in capital), not from issuance. How the
+  freed 10% is used is **open** (`monetary-layer.md`); the engine still
+  implements the old split until that is decided.
 - The composite share is paid **per composite**: share = 45% ÷ (number of
   composites in the gap). Each range miner receives share × (composites
   accepted from their range, i.e. the accepted tail, per D4).

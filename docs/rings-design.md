@@ -192,6 +192,11 @@ together with canonical generators modulo units.
   discoverer** (R6), **10% to the validator pool**. The miner's proportion
   matches the main-chain prime finder's 45%, so neither layer is
   automatically more attractive.
+  **Revised 2026-11-24: the 10% validator share is dropped.** Validators earn like
+  Reserve Banks (seigniorage on the primes backing cash, discount-window
+  interest, fees, spin-offs on paid-in capital), not from issuance. How the
+  freed 10% is used is **open** (`monetary-layer.md`); the engine still
+  implements the old split until that is decided.
 - **Upstream** goes to the ancestors along the DAG: for quadratic and cubic
   rings that is the **holders of p's micro-units, pro rata, at the moment the
   entry is finalized** (spin-off model, `monetary-layer.md`). For nested rings (degree ≥ 4)

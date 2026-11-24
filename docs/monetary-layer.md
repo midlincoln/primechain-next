@@ -257,6 +257,26 @@ treasury key, as for validators; customer API; later the cash desk). Stages
 0–1 need only a wallet; the cash desk is the first piece that needs a
 server.
 
+## Validator income without an issuance share (2026-11-24)
+
+**Decided:** the 10% validator share of block and ring rewards (D8, R11) is
+dropped. As at the Fed, validators earn from services and assets, so they
+earn only when the economy grows:
+
+1. **Seigniorage:** banks buy cash notes with prime units; the validator holds
+   those units, which earn spin-offs.
+2. **Interest** on discount-window loans to member banks.
+3. **Fees:** transactions, ring registrations, cash services.
+4. **Spin-offs on paid-in capital** (membership stock is held as primes).
+
+At launch validator income is close to zero (the founder runs all validators).
+
+**Open: what the freed 10% pays for.** Candidates: (1) back to miners
+(main chain 50/50, rings 50/35/15); (2) lower issuance; (3) a rule-based
+protocol treasury paying fixed bounties for predefined evidence results (no
+discretionary spending); (4) a coupon to all holders of main-chain primes, so
+bond portfolios earn from day one.
+
 ## Shares and BFT independence
 
 Membership stock lets banks influence validators, but consensus must stay
