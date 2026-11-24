@@ -21,7 +21,24 @@ Add new problems as they come up.
 | 11 | **Large records:** ~20–25 KB per integer | v2 paper; measurements | one block per prime, keys stored once, miner signatures in the journal: ~650 bytes per block (D15) |
 | 12 | **One identity both signs and receives rewards** | v1 distribution code | two keys per validator: hot consensus key, cold payout key (D10) |
 
-## To add
+## Founder's list (2026-11-24)
 
-Further problems from the founder's experience (networking, mining
-clients, operations, upgrades, …).
+| # | v1 problem | Status in Next |
+|---|---|---|
+| F1–F3 | **Finalization-envelope fork:** the same body and proof finalized with different vote or round evidence gives different record hashes (seen at integer 20057); record identity includes mutable evidence; no canonical envelope | **Solved by design:** block identity is the header hash, which excludes the certificate (D9). Two-phase consensus decides one value per instance |
+| F4–F5 | **An assigned validator that is behind stalls the chain;** no fallback order | **Solved:** any quorum decides; the proposer rotates on timeout, (h + k + r) mod n (A3-1) |
+| F6 | **Peer sync cannot repair a forked local tip** (previous-hash mismatch) | **A3 requirement:** the agreed chain is the certified chain. On catch-up, local blocks without a valid certificate, or conflicting with a certified one, are rolled back automatically |
+| F7 | **Range sync fragile:** count mismatch, bad header, missing response | **A3 requirement:** chunked fetch by height, each block verified against its certificate, served from the immutable block file, with timeouts and retry from another peer, keeping partial progress |
+| F8 | **Replay errors lack context** | **Process:** errors name height, instance (h, k, r), transaction hash, sender, expected vs. actual nonce or balance, peer and range |
+| F9 | **Stale mempool transactions** conflict after the chain moves | **A3 requirement:** revalidate the mempool against finalized state after every block (A2.2 already drops failures at block close) |
+| F10 | **Bulk send nonce races** | **Solved:** one transfer with up to 1,000 outputs and one nonce (D16) |
+| F11 | **Missing helper binaries** | **Process:** one executable with subcommands |
+| F12 | **Binary/version drift** | **Process:** build commit reported in status and at startup; protocol and build versions exchanged in the peer handshake; release check |
+| F13 | **Public load hurts validator liveness** | **A3 requirement:** authenticated validator links separate from public traffic, per-client limits, cheap in-memory queries |
+| F14 | **No removal or suspension of a lagging validator** | **Mitigated:** a lagging validator no longer blocks anyone (any quorum). Removal by governance vote (A3-2); missed-proposal statistics recorded as evidence; automatic suspension possibly later |
+| F15 | **Reserves, slashing and eligibility incomplete** | **A3** records equivocation evidence; penalties and eligibility come with the monetary layer |
+| F16 | **Reward distribution is operational, not protocol** | **Solved:** automatic per-epoch distribution (D17) |
+| F17 | **Fee distribution policy underspecified** | **Open (economics):** equal shares for now (D17) |
+| F18 | **Deleting chain.dat and resyncing failed** (reported by a new user) | **A3 requirement:** a fresh node syncing from genesis is a mandatory test |
+| F19 | **Logs do not show the selected validator, stale frontier, accepted record or reward outcome** | **Process:** structured decision events (proposer, round, decision, rewards) |
+| F20 | **No mainnet-grade economic schedule:** fixed 1 PRIME per prime, uncapped | **Open (economics):** `reward(p)` is a function; options A–D in `monetary-layer.md`, to be chosen by simulation |
