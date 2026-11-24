@@ -187,15 +187,13 @@ together with canonical generators modulo units.
 ### R11. Ring reward split and upstream flow (2026-11-23, starting values)
 
 - Each ring entry's issuance (in the same equal micro-units as the main
-  chain; one unit of account) is split **45% to the
-  entry's miner** (found the generator), **35% upstream**, **10% to the
-  discoverer** (R6), **10% to the validator pool**. The miner's proportion
-  matches the main-chain prime finder's 45%, so neither layer is
-  automatically more attractive.
-  **Revised 2026-11-24: the 10% validator share is dropped.** Validators earn like
-  Reserve Banks (`monetary-layer.md`), not from issuance. The main chain is
-  now 50/50 (D8). **Proposed, to be confirmed: 50% entry's miner / 35% upstream
-  / 15% discoverer**, which keeps the miner level with the prime finder.
+  chain; one unit of account) is split (revised 2026-11-24) **50% to the
+  entry's miner** (found the generator), **35% upstream**, **15% to the ring's
+  discoverer** (R6). The miner's proportion matches the main-chain prime
+  finder's 50% (D8). There is no validator share (`monetary-layer.md`).
+- **Split and ramified entries issue the same total.** For split q, half of
+  every share is paid in x and half in y (R8); for ramified q, all of it is
+  paid in the single prime x.
 - **Upstream** goes to the ancestors along the DAG: for quadratic and cubic
   rings that is the **holders of p's micro-units, pro rata, at the moment the
   entry is finalized** (spin-off model, `monetary-layer.md`). For nested rings (degree ≥ 4)
