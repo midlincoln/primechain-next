@@ -270,6 +270,28 @@ request.
   checked against it (for example, cash from a lost validator remains
   redeemable on chain from its backing).
 
+### A3-4. Networking and catch-up (2026-11-24)
+
+- **Two kinds of links:** validator ↔ validator links are authenticated
+  (each side proves its consensus key), persistent, and carry proposals,
+  votes and certificates. Public links (miners, wallets, clients) have
+  per-client limits and never compete with validator traffic (F13).
+- **Messages:** proposals, prevotes, precommits; submissions (ranges,
+  primes, transfers, governance votes, ring messages); and block and
+  certificate requests. All are versioned (D12) and size-bounded.
+- **Catch-up:** a node that is behind fetches certified blocks in chunks by
+  height, verifies each one (all mathematics, hash chain, certificate
+  against the set active at that height), keeps partial progress, and
+  retries another peer on failure (F7). Any local block that is
+  uncertified, or conflicts with a certified block, is rolled back
+  automatically (F6). **A fresh node syncing from genesis is a mandatory
+  test** (F18).
+- **Mempool:** revalidated against finalized state after every block (F9).
+- **Handshake:** protocol version and build commit are exchanged; the build
+  commit is also reported in status and at startup (F12).
+- Errors and logs carry full context, and decisions are logged as
+  structured events (F8, F19). One executable with subcommands (F11).
+
 ### D14. Number types (2026-11-23)
 
 | Kind | Examples | Type | Encoding |
