@@ -1,70 +1,79 @@
 #pragma once
-// Verifier for quadratic-field certificates (docs/extension-certificates.md, v0).
-// Independent of PARI: checks only integer identities and the Minkowski argument.
+// Verifier for quadratic-field certificates (docs/extension-certificates.md).
+// Independent of PARI: checks only integer identities, Minkowski's theorem and
+// Dedekind–Kummer (prime ideals above q <-> roots of f mod q).
+//
+// Conventions: D is a fundamental discriminant; omega = (1 + sqrt(D))/2 if D = 1 (mod 4),
+// omega = sqrt(D/4) if D = 0 (mod 4); f is omega's minimal polynomial and O_K = Z[omega].
+// Elements are c0 + c1*omega. The prime ideal labeled (D, q, r) is (q, omega - r), where r is a
+// root of f mod q.
 #include <gmpxx.h>
 
-#include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace primechain::extensions {
 
-// Deterministic primality oracle for integers the verifier must trust as prime.
-// On chain this is "the prime is in a finalized block, or carries a Pratt certificate".
+// "This integer is prime" as the chain knows it: in a finalized block, or by Pratt certificate.
 using PrimeOracle = std::function<bool(const mpz_class&)>;
 
 struct Generator {
-    mpz_class q;  // rational prime below the generated prime ideal
-    mpz_class a;  // element (a + b*sqrt(D)) / 2
-    mpz_class b;
+    mpz_class q;   // rational prime below the ideal
+    mpz_class r;   // label: root of f mod q (the smaller root for split q)
+    mpz_class c0;  // generator c0 + c1*omega of the ideal (q, omega - r)
+    mpz_class c1;
 };
 
 struct FieldCertificate {
-    mpz_class d;                                       // fundamental discriminant
-    mpz_class f;                                       // claimed eligibility frontier (a prime)
+    mpz_class d;                                          // fundamental discriminant (the ring's identity)
     std::vector<std::pair<mpz_class, unsigned>> factors;  // |D| = prod p^e
-    std::vector<Generator> generators;                 // increasing q, exactly the non-inert q <= M_K
+    std::vector<Generator> generators;                    // increasing q: every non-inert q <= M_K
 };
 
 enum class Decomposition { Split, Inert, Ramified };
 
-struct SplitEntry {
+struct FieldEntry {  // one field-chain entry (spec section 4)
     mpz_class d;
     mpz_class p;
     Decomposition type;
     bool has_generator{false};
-    mpz_class a, b;
+    mpz_class r, c0, c1;
 };
 
-enum class Comparison { Below, Above };  // strict: equality is impossible where used
+enum class Comparison { Below, Above };  // M_K < x, or M_K > x (equality is impossible where used)
 
-// True when (a + b*sqrt(d))/2 is in O_K and has norm +-4q/4 = +-q (positive for d < 0).
-bool generatesPrimeAbove(const mpz_class& d, const mpz_class& q, const mpz_class& a, const mpz_class& b);
+mpz_class norm(const mpz_class& d, const mpz_class& c0, const mpz_class& c1);  // N(c0 + c1*omega)
+bool isRoot(const mpz_class& d, const mpz_class& q, const mpz_class& r);         // f(r) = 0 mod q, 0 <= r < q
+mpz_class otherRoot(const mpz_class& d, const mpz_class& q, const mpz_class& r); // the conjugate root mod q
+Decomposition decomposition(const mpz_class& d, const mpz_class& q);
+
+// The element generates exactly the prime ideal labeled (d, q, r): norm +-q (positive if d < 0)
+// and membership in (q, omega - r), i.e. c0 + c1*r = 0 mod q.
+bool generatesLabeledPrime(const mpz_class& d, const mpz_class& q, const mpz_class& r,
+                           const mpz_class& c0, const mpz_class& c1);
 
 bool isFundamental(const mpz_class& d, const std::vector<std::pair<mpz_class, unsigned>>& factors,
                    const PrimeOracle& is_prime, std::string& error);
 
-// Minkowski bound comparisons using integers and a rational enclosure of pi^2.
-Comparison compareMinkowski(const mpz_class& d, const mpz_class& x);  // M_K vs x (x > 0)
-bool eligibleAt(const mpz_class& d, const mpz_class& f);              // M_K <= f
+// Eligibility (R3): |D| <= F^2. eligibleAtPrime = the first prime p with p^2 >= |D|.
+bool eligibleAt(const mpz_class& d, const mpz_class& frontier);
 
-Decomposition decomposition(const mpz_class& d, const mpz_class& p);
+// Minkowski comparison, integers only (pi^2 enclosed rationally).
+Comparison compareMinkowski(const mpz_class& d, const mpz_class& x);
 
-// Full check of a field certificate. `primes` must contain every prime up to M_K
-// (taken from the main chain).
+// Full check of a field certificate. `primes` must contain every prime up to M_K (from the chain).
 bool verifyField(const FieldCertificate& cert, const std::vector<mpz_class>& primes,
                  const PrimeOracle& is_prime, std::string& error);
 
-bool verifySplit(const SplitEntry& entry, const PrimeOracle& is_prime, std::string& error);
+bool verifyEntry(const FieldEntry& entry, const PrimeOracle& is_prime, std::string& error);
 
-// Imaginary fields only: a finite search proves that no element has norm q, so a
-// required prime ideal above q is not principal and the field has no certificate.
+// Imaginary fields only: a finite search proves that no element has norm q.
 bool provesNoGeneratorImaginary(const mpz_class& d, const mpz_class& q);
 
-// Text encoding from the spec (section 5).
 bool parseField(const std::string& line, FieldCertificate& cert, std::string& error);
-bool parseSplit(const std::string& line, SplitEntry& entry, std::string& error);
+bool parseEntry(const std::string& line, FieldEntry& entry, std::string& error);
 std::string formatField(const FieldCertificate& cert);
 
 }  // namespace primechain::extensions

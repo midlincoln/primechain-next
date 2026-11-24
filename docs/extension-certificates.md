@@ -1,157 +1,161 @@
-# Extension certificates: quadratic fields (v0)
+# Extension certificates: quadratic fields
 
-Status: draft specification, 2026-11-22. It has no effect on the live chain or
-the main-chain experiments.
+Status: specification v1, 2026-11-24. It supersedes the v0 draft of
+2026-11-22, implementing rings decisions R3, R4 and R7–R10
+(`rings-design.md`) and the spin-off model (`monetary-layer.md`). This is
+certificate type 1 (R4); general degree will follow as further types.
 
-This document specifies the first layer of PrimeChain's ring work:
+The rings layer needs two kinds of evidence:
 
-1. A **field certificate** (an "F-proof"). It shows that a number field K may
-   open at main-chain frontier F, and that its ring of integers O_K is a
-   principal ideal domain (PID), so every prime ideal has a single generator.
-2. A **prime decomposition entry** for a field chain. It shows how a rational
-   prime p factors in O_K, with a generator for every prime ideal above p.
-
-v0 covers **quadratic fields only**. They avoid the two hard general-degree
-problems: a quadratic field is identified exactly by its discriminant, and its
-ring of integers is known in closed form. General degree follows in a later
-version (Dedekind–Kummer decomposition, certified integral bases).
+1. A **field certificate**: the ring may open, and its ring of integers is a
+   principal ideal domain (PID).
+2. **Field-chain entries**: how each main-chain prime q splits or ramifies in
+   the ring, with a generator of the labeled prime above q.
 
 ## 1. Identity: the fundamental discriminant
 
-Every quadratic field is `K = Q(√D)` for exactly one **fundamental
-discriminant** D ≠ 1:
+Every quadratic field is K = Q(√D) for exactly one **fundamental
+discriminant** D: either D ≡ 1 (mod 4) and squarefree, or D = 4m with
+m ≡ 2 or 3 (mod 4) and m squarefree. D is the ring's identity, so two
+certificates with the same D are the same ring. D ≡ 2, 3 (mod 4) is never a
+discriminant, and values such as 20 or 36 belong to smaller rings, not to
+new fields.
 
-- `D ≡ 1 (mod 4)` and D is squarefree, or
-- `D = 4m` with `m ≡ 2 or 3 (mod 4)` and m squarefree.
+Squarefreeness is proved by a factorization of |D|. Each prime factor is on
+the main chain or has its own Pratt certificate.
 
-D is the field's identity: two certificates with the same D describe the same
-field, so the second one is a duplicate. The ring of integers is
+## 2. Ring elements: the standard generator ω
 
-- `O_K = Z[(1 + √D)/2]` when `D ≡ 1 (mod 4)`;
-- `O_K = Z[√m]` when `D = 4m`.
+- If D ≡ 1 (mod 4): ω = (1 + √D)/2, a root of f(x) = x² − x + (1 − D)/4.
+- If D ≡ 0 (mod 4): ω = √(D/4), a root of f(x) = x² − D/4.
 
-Every element is written uniformly as `α = (a + b√D)/2`, where `a, b` are
-integers with `a ≡ b·D (mod 2)`. Its norm is `N(α) = (a² − D·b²)/4`.
+Then O_K = Z[ω], and every element is **c₀ + c₁ω with integers c₀, c₁**.
+There is no denominator and no parity condition. The generic encoding (R4)
+keeps a denominator field for higher degrees; it is 1 here.
 
-Squarefreeness is proved by a factorization of |D| into primes. Each prime
-must be on the main chain (≤ F) or carry its own Pratt certificate.
+Norms:
 
-## 2. Eligibility: Minkowski bound below the frontier
+- D ≡ 1 (mod 4): N(c₀ + c₁ω) = c₀² + c₀c₁ + c₁²·(1 − D)/4.
+- D ≡ 0 (mod 4): N(c₀ + c₁ω) = c₀² − (D/4)·c₁².
 
-The Minkowski bound of a quadratic field is
+Example, Q(√17): ω = (1 + √17)/2, so (3 − √17)/2 = 2 − ω, and
+N(2 − ω) = 4 − 2 − 4 = −2.
 
-- real (D > 0): `M_K = √D / 2`;
-- imaginary (D < 0): `M_K = (2/π)·√|D|`.
+## 3. Ring-prime labels (Dedekind–Kummer)
 
-The field is **eligible at frontier F** when `M_K ≤ F`. Validators must decide
-this with integers only:
+Since O_K = Z[ω], the prime ideals above a rational prime q correspond
+exactly to the irreducible factors of f(x) mod q:
 
-- real: `D ≤ 4·F²`;
-- imaginary: `4·|D| ≤ π²·F²`. π² is irrational, so equality never happens.
-  Validators compare against a rational interval `[L, U]` containing π²,
-  narrow enough to decide `4|D| < L·F²` or `4|D| > U·F²`. The required
-  precision grows with F, and the reference interval is part of the protocol
-  constants.
+| f mod q | q in K | prime ideals |
+|---|---|---|
+| two distinct roots r₁, r₂ | split | (q, ω − r₁) and (q, ω − r₂), conjugates |
+| one double root r | ramified | (q, ω − r), squared |
+| no root | inert | (q) itself |
 
-Alternative rules (for example `|D| ≤ F`, or Bach's bound if GRH is
-established) only change this section.
+**The label of a ring prime is (ring, q, r)**, with 0 ≤ r < q. For split q,
+x is the prime with the smaller root and y the one with the larger root.
+The two roots sum to the trace of ω (1 if D ≡ 1 mod 4, otherwise 0), so the
+conjugate root is computed in one step. Labels name ideals, not
+generators, so units never cause ambiguity.
 
-## 3. Class number one: the PID certificate
+The polynomial must be ω's: with x² − D, the prime 2 would be misclassified
+in rings like Q(√17) (x² − 17 ≡ (x − 1)² mod 2 looks ramified, but
+f = x² − x − 4 ≡ x(x + 1) shows that 2 splits).
 
-**Theorem (Minkowski).** Every ideal class of O_K contains an integral ideal of
-norm ≤ M_K. That ideal factors into prime ideals of norm ≤ M_K. Therefore, if
-every prime ideal of norm ≤ M_K is principal, the class group is trivial.
+**Assets (spin-off model):** the asset ID of a ring prime is
+hash(ring ID, q, r). The two conjugates are separate assets, each receiving
+half of the split's issuance (R8); a ramified prime is one asset.
 
-In a quadratic field, a rational prime q decomposes according to the Kronecker
-symbol `(D/q)`:
+## 4. Eligibility (R3)
 
-| `(D/q)` | Decomposition | Prime ideals | Norms |
-|---|---|---|---|
-| +1 | split: `qO_K = 𝔮·𝔮'` | two conjugates | q, q |
-| −1 | inert: `qO_K` is prime | one, `(q)` itself | q² |
-| 0 | ramified: `qO_K = 𝔮²` | one | q |
+A ring may be submitted while **gate 1 is open and |D| ≤ F²**, where F is the
+main-chain frontier. Nothing is claimed in the certificate: validators check
+against the current frontier. The ring's **eligibility prime**, used for
+history and display, is the first prime p with p² ≥ |D|. With genesis
+{2, 3} (F = 3), D ∈ {5, 8, −3, −4, −7, −8} are eligible from the start.
 
-- An inert prime ideal is `(q)`, which is principal automatically.
-- For a split prime, if `𝔮 = (α)` then `𝔮' = (ᾱ)`, so one generator covers both.
-- An element whose norm is ±q (q prime) generates a prime ideal above q.
+## 5. PID certificate
 
-**PID certificate.** For every prime `q ≤ M_K` with `(D/q) ≠ −1`, one element
-`α_q = (a + b√D)/2` with `N(α_q) = ±q`.
+**Theorem (Minkowski).** Every ideal class contains an integral ideal of norm
+≤ M_K, where M_K = √D/2 for D > 0 and M_K = (2/π)·√|D| for D < 0. If every
+prime ideal of norm ≤ M_K is principal, the class group is trivial.
 
-**Verification.**
-1. Enumerate the primes `q ≤ M_K` from the main chain. Compare `q² ≤ 4·M_K²`
-   (real) or the π-interval form (imaginary) using integers only.
-2. For each q, compute `(D/q)`.
-3. Check that the certificate lists exactly the q with `(D/q) ≠ −1`, in
-   increasing order, with no extras.
-4. For each listed q, check `a ≡ b·D (mod 2)` and `a² − D·b² = ±4q`. For
-   imaginary fields the norm is positive, so the sign is +.
+Inert primes give the principal ideal (q). For split q, a generator of one
+prime gives the conjugate's generator by conjugation. So the certificate
+lists, for **every prime q ≤ M_K that is not inert**, in increasing order:
 
-No certificate exists for a non-PID field, because some required norm
-equation has no solution. Example: `D = −20`, `K = Q(√−5)`, `M_K ≈ 2.85`. The
-prime 2 ramifies, and `a² + 20b² = 8` has no integer solution, so 2 has no
-generator.
+  (q, r, c₀, c₁), where r is the **smaller** root of f mod q and c₀ + c₁ω
+  generates (q, ω − r).
 
-## 4. Prime decomposition entry (the field chain)
+**Validators check:**
 
-For each rational prime p, in main-chain order, the field chain of K records:
+1. D is fundamental, from the factorization of |D|.
+2. Walk through the primes q ≤ M_K (from the chain). Comparisons use
+   integers only: q² ≤ D/4 for real fields; for imaginary fields
+   4|D| ≤ π²q², with a stored rational enclosure of π², and equality is
+   impossible.
+3. For each q: its type from the Kronecker symbol (D/q). Inert q is
+   skipped. Otherwise the next certificate item must have this q, f(r) ≡ 0
+   (mod q), r must be the smaller root (or the double root), and the
+   generator must satisfy **N = ±q** (positive for D < 0) and
+   **c₀ + c₁r ≡ 0 (mod q)**, so it generates exactly the labeled prime.
+4. Nothing is missing and nothing is extra.
 
-- p and a link to the main-chain block containing p;
-- the decomposition type from `(D/p)`;
-- for split or ramified p, a generator `(a, b)` with `a² − D·b² = ±4p`.
+No certificate exists for a non-PID. Example: Q(√−5) (D = −20,
+M_K ≈ 2.85). The prime 2 ramifies, and no element has norm 2.
 
-Verification is steps 2 and 4 above for this single p. Completeness is
-automatic for degree 2: `Σ eᵢfᵢ = 2` holds for each row of the table.
+## 6. Field-chain entries (R7–R10)
 
-Real quadratic generators can be very large (Q(√94) already needs 7-digit
-coefficients), so all arithmetic uses arbitrary-precision integers.
-**Canonical generators** (one per ideal, modulo units) are not required here.
-They are needed only before prime elements become assets.
+Entries follow main-chain primes in increasing norm, up to the frontier.
+**Only split and ramified primes are recorded** (R9). An entry is
 
-## 5. Encoding (v0, experimental)
+  (ring, p, type, r, c₀, c₁): for split p, the smaller root r and a
+  generator of (p, ω − r); for ramified p, the double root.
 
-Text lines, one record per line. Integers are in decimal with an optional sign.
+Validators check that p is a finalized main-chain prime; the type matches
+(D/p); f(r) ≡ 0 (mod p); r is the smaller root for split p, or the double
+root for ramified p; N = ±p; and c₀ + c₁r ≡ 0 (mod p). They also check that
+every prime skipped since the ring's previous entry is inert, and that there
+is at most one entry per p per ring (R10). One entry gives one proof and one
+miner reward, while issuing two assets for split p (R8, spin-offs).
+
+Why a generator proves primality: if π = αβ, then ±p = N(α)N(β), so one
+factor has norm ±1 and is a unit. Primality of the ring prime reduces to the
+main chain's Pratt certificate for p.
+
+## 7. Encoding (experimental text form)
 
 ```
-FIELD D=<D> F=<F> FACTORS=<p1>^<e1>*<p2>^<e2>*... GENS=<q>:<a>:<b>,<q>:<a>:<b>,...
-SPLIT D=<D> P=<p> TYPE=<split|inert|ramified> GEN=<a>:<b>     (GEN omitted for inert)
+FIELD D=<D> FACTORS=<p1>^<e1>*... GENS=<q>:<r>:<c0>:<c1>,...
+ENTRY D=<D> P=<p> TYPE=<split|ramified|inert> [R=<r> GEN=<c0>:<c1>]
 ```
 
-A binary canonical encoding, commit–reveal wrapping, discoverer attribution and
-F-proof chain blocks come after the verifier is settled.
+`TYPE=inert` lines appear in the test vectors only, to test the skip rule;
+they are never recorded on chain. The canonical binary encoding,
+commit–reveal wrapping (R5), the founder record (R6) and the on-chain ring
+blocks come with B3.
 
-## 6. Test expectations
+## 8. Implementation and results (2026-11-24)
 
-- At F = 2, exactly the 8 quadratic fields D ∈ {5, 8, 12, 13, −3, −4, −7, −8}
-  are eligible, and all have empty certificates. (Their Minkowski bounds are
-  below 2, so no prime needs a generator.)
-- At F = 3, there are 18 eligible quadratic fields. D = −15 and D = −20 are
-  eligible, but no certificate exists for them.
-- Valid certificates are accepted. Rejected: wrong or missing generators,
-  extra entries, a non-fundamental D, wrong decomposition type, and a field
-  that is not eligible at the claimed F.
+`experiments/extensions/`: the PARI generator (`gen_quadratic_vectors.gp`),
+its output (`quadratic_vectors.txt`: every quadratic field eligible at a
+prime ≤ 47, i.e. |D| ≤ 2209, plus entries for p < 2000 in eight rings), and
+the GMP verifier with tests (CTest `quadratic_field_certificates`).
 
-## 7. First results (2026-11-22)
-
-`experiments/extensions/` contains the PARI generator (`gen_quadratic_vectors.gp`),
-its output (`quadratic_vectors.txt`, every quadratic field eligible at a prime
-F ≤ 50), and the C++ verifier with tests (CTest `quadratic_field_certificates`,
-which needs GMP):
-
-- **1,165** class-number-one certificates verified, independently of PARI.
-- **3,182** eligible fields have no certificate. For the **1,653** imaginary
-  ones, the verifier proves non-principality itself by a finite norm search.
-- The certified imaginary PIDs are exactly the nine Heegner–Stark fields,
-  D ∈ {−3, −4, −7, −8, −11, −19, −43, −67, −163}.
-- **2,121** prime decomposition entries verified (D = 8, 5, 28, 94, −4, −3,
-  −163; p < 2000).
-- **1,868** corrupted variants rejected: altered or missing generators,
-  elements outside O_K, reordering, extra entries, a non-fundamental D, a
-  wrong factorization, a frontier below the eligibility prime, and wrong
-  decomposition types.
-- Generator coefficients reach 39 digits by D = 8401, so arbitrary-precision
-  arithmetic is required.
+- **Completeness:** the test independently enumerates every fundamental
+  discriminant with |D| ≤ 2209 (1,343 fields) and checks that each appears
+  exactly once.
+- **351** PID certificates verified, independently of PARI; **992**
+  eligible non-PIDs. For the **664** imaginary ones, the verifier proves
+  non-principality itself by a finite norm search.
+- The certified imaginary PIDs are exactly the nine Heegner–Stark fields.
+- **2,424** field-chain entries verified (1,181 split or ramified, the rest
+  inert), including Q(√94) (D = 376).
+- **1,375** corrupted variants rejected: altered generators, a larger-root
+  label, a missing or extra generator, reordering, a non-fundamental D, a
+  wrong factorization, a wrong type, and an inert prime with a generator.
+- Eligibility at genesis: 2 rings at F = 2, and 6 by F = 3.
 - Clean under AddressSanitizer and UndefinedBehaviorSanitizer.
 
-Real quadratic fields without a certificate are not proved to be non-PIDs.
-Their unit groups are infinite, so a finite search does not settle them.
+Real quadratic fields without a certificate are not proved to be non-PIDs
+(their unit groups are infinite), which does not matter: only PIDs open.

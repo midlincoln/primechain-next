@@ -2,6 +2,7 @@
 // Usage: primechain-quadratic-cert-tests <quadratic_vectors.txt>
 #include "quadratic_certs.hpp"
 
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -18,7 +19,7 @@ void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
 
-// Test oracle: deterministic trial division (inputs here are < 10^6). On chain this is a
+// Test oracle: deterministic trial division (inputs here are small). On chain this is a
 // finalized block or a Pratt certificate.
 bool trialPrime(const mpz_class& n) {
     if (n < 2) return false;
@@ -34,9 +35,21 @@ std::vector<mpz_class> primesUpTo(unsigned long limit) {
     return out;
 }
 
-mpz_class previousPrime(const mpz_class& p) {
-    for (mpz_class k = p - 1; k >= 2; --k) if (trialPrime(k)) return k;
-    return 0;
+std::vector<std::pair<mpz_class, unsigned>> factorize(unsigned long n) {
+    std::vector<std::pair<mpz_class, unsigned>> out;
+    for (unsigned long p = 2; p * p <= n; ++p) {
+        unsigned e = 0;
+        while (n % p == 0) { n /= p; ++e; }
+        if (e) out.emplace_back(mpz_class(p), e);
+    }
+    if (n > 1) out.emplace_back(mpz_class(n), 1u);
+    return out;
+}
+
+// The prime at which a ring becomes eligible: the first prime p with |D| <= p^2 (R3).
+long eligiblePrime(const mpz_class& d) {
+    for (unsigned long p = 2;; ++p)
+        if (trialPrime(p) && eligibleAt(d, p)) return static_cast<long>(p);
 }
 
 void expectReject(const FieldCertificate& cert, const std::vector<mpz_class>& primes, const std::string& what) {
@@ -46,30 +59,25 @@ void expectReject(const FieldCertificate& cert, const std::vector<mpz_class>& pr
 
 void mutateField(const FieldCertificate& good, const std::vector<mpz_class>& primes, std::size_t& mutations) {
     if (!good.generators.empty()) {
-        auto c = good; c.generators[0].a += 2; expectReject(c, primes, "altered generator a");
-        c = good;  // +2|b|+2 keeps parity and never lands on the conjugate (a, -b), which is also valid
-        c.generators[0].b += 2 * abs(good.generators[0].b) + 2; expectReject(c, primes, "altered generator b");
+        const auto& g0 = good.generators[0];
+        auto c = good; c.generators[0].c0 += 1; expectReject(c, primes, "altered c0");
+        c = good; c.generators[0].c1 += 1; expectReject(c, primes, "altered c1");
         c = good; c.generators.erase(c.generators.begin()); expectReject(c, primes, "missing generator");
-        c = good; c.generators[0].a += 1; expectReject(c, primes, "element outside O_K");
-        mutations += 4;
+        mutations += 3;
+        const mpz_class other = otherRoot(good.d, g0.q, g0.r);
+        if (other != g0.r) {  // split: claiming the larger root breaks the label rule
+            c = good; c.generators[0].r = other; expectReject(c, primes, "label is the larger root");
+            ++mutations;
+        }
         if (good.generators.size() > 1) {
             c = good; std::swap(c.generators[0], c.generators[1]); expectReject(c, primes, "generators out of order");
             ++mutations;
         }
     }
-    auto c = good; c.generators.push_back({good.f + 1000, 1, 1}); expectReject(c, primes, "extra generator");
+    auto c = good; c.generators.push_back({mpz_class(997), 0, 1, 1}); expectReject(c, primes, "extra generator");
     c = good; c.d *= 9; c.factors.clear(); expectReject(c, primes, "non-fundamental D");
     c = good; c.factors.front().second += 1; expectReject(c, primes, "wrong factorization");
     mutations += 3;
-    const mpz_class earlier = previousPrime(good.f);
-    if (earlier != 0) {
-        c = good; c.f = earlier;
-        std::string error;
-        bool accepted = false;
-        try { accepted = verifyField(c, primes, trialPrime, error); } catch (const std::exception&) {}
-        require(!accepted, "accepted at a frontier below the field's eligibility prime: " + formatField(good));
-        ++mutations;
-    }
 }
 
 }  // namespace
@@ -80,10 +88,10 @@ int main(int argc, char** argv) {
         std::ifstream in(argv[1]);
         require(static_cast<bool>(in), "open vectors file");
         const auto primes = primesUpTo(200);
-        std::map<long, std::size_t> eligible_by_f;
-        std::set<long> imaginary_pids;  // F -> fields (with or without certificate)
-        std::size_t fields = 0, nocert = 0, nocert_proved = 0, splits = 0, mutations = 0;
-        std::size_t line_number = 0;
+        std::map<long, std::size_t> eligible_by_prime;  // eligibility prime -> fields (with or without certificate)
+        std::set<long> imaginary_pids, seen;
+        std::size_t fields = 0, nocert = 0, nocert_proved = 0, entries = 0, recorded = 0, mutations = 0, line_number = 0;
+        long max_abs_d = 0;
         std::string line, error;
         while (std::getline(in, line)) {
             ++line_number;
@@ -94,24 +102,20 @@ int main(int argc, char** argv) {
                 require(parseField(line, cert, error), error + where);
                 require(formatField(cert) == line, "round-trip encoding" + where);
                 require(verifyField(cert, primes, trialPrime, error), "valid certificate rejected: " + error + where);
-                const mpz_class earlier = previousPrime(cert.f);
-                require(earlier == 0 || !eligibleAt(cert.d, earlier), "F is not the first eligible prime" + where);
-                ++eligible_by_f[cert.f.get_si()];
+                require(seen.insert(cert.d.get_si()).second, "field listed twice" + where);
+                ++eligible_by_prime[eligiblePrime(cert.d)];
                 if (cert.d < 0) imaginary_pids.insert(cert.d.get_si());
+                max_abs_d = std::max(max_abs_d, std::abs(cert.d.get_si()));
                 ++fields;
-                if (fields % 7 == 1) mutateField(cert, primes, mutations);  // sample across the file
+                if (fields % 5 == 1) mutateField(cert, primes, mutations);
             } else if (line.rfind("NOCERT ", 0) == 0) {
-                // NOCERT D=<D> F=<F> H=<h>: the field is eligible but not a PID.
                 std::string d_text = line.substr(line.find("D=") + 2);
                 d_text = d_text.substr(0, d_text.find(' '));
-                std::string f_text = line.substr(line.find("F=") + 2);
-                f_text = f_text.substr(0, f_text.find(' '));
-                const mpz_class d(d_text), f(f_text);
-                require(eligibleAt(d, f), "NOCERT field not eligible at its F" + where);
-                ++eligible_by_f[f.get_si()];
+                const mpz_class d(d_text);
+                require(seen.insert(d.get_si()).second, "field listed twice" + where);
+                ++eligible_by_prime[eligiblePrime(d)];
                 ++nocert;
-                if (d < 0) {
-                    // Prove it: some required prime ideal has no generator.
+                if (d < 0) {  // prove it: some required prime ideal has no generator
                     bool proved = false;
                     for (const auto& q : primes) {
                         if (compareMinkowski(d, q) == Comparison::Below) break;
@@ -123,21 +127,28 @@ int main(int argc, char** argv) {
                     require(proved, "could not prove non-principality of imaginary NOCERT field" + where);
                     ++nocert_proved;
                 }
-            } else if (line.rfind("SPLIT ", 0) == 0) {
-                SplitEntry entry;
-                require(parseSplit(line, entry, error), error + where);
-                require(verifySplit(entry, trialPrime, error), "valid split entry rejected: " + error + where);
-                ++splits;
-                if (splits % 11 == 1) {
+            } else if (line.rfind("ENTRY ", 0) == 0) {
+                FieldEntry entry;
+                require(parseEntry(line, entry, error), error + where);
+                require(verifyEntry(entry, trialPrime, error), "valid entry rejected: " + error + where);
+                ++entries;
+                if (entry.type != Decomposition::Inert) ++recorded;
+                if (entries % 7 == 1) {
                     auto bad = entry;
                     bad.type = entry.type == Decomposition::Split ? Decomposition::Inert : Decomposition::Split;
-                    require(!verifySplit(bad, trialPrime, error), "wrong type accepted" + where);
+                    require(!verifyEntry(bad, trialPrime, error), "wrong type accepted" + where);
                     if (entry.has_generator) {
-                        bad = entry; bad.a += 2;
-                        require(!verifySplit(bad, trialPrime, error), "wrong generator accepted" + where);
+                        bad = entry; bad.c0 += 1;
+                        require(!verifyEntry(bad, trialPrime, error), "wrong generator accepted" + where);
+                        const mpz_class other = otherRoot(entry.d, entry.p, entry.r);
+                        if (other != entry.r) {
+                            bad = entry; bad.r = other;
+                            require(!verifyEntry(bad, trialPrime, error), "larger-root label accepted" + where);
+                            ++mutations;
+                        }
                     } else {
-                        bad = entry; bad.has_generator = true; bad.a = 1; bad.b = 1;
-                        require(!verifySplit(bad, trialPrime, error), "inert entry with generator accepted" + where);
+                        bad = entry; bad.has_generator = true; bad.r = 0; bad.c0 = 1; bad.c1 = 1;
+                        require(!verifyEntry(bad, trialPrime, error), "inert entry with generator accepted" + where);
                     }
                     mutations += 2;
                 }
@@ -145,22 +156,31 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("unknown record" + where);
             }
         }
-        // Cross-check with the hand analysis: 8 quadratic fields at F = 2, 18 by F = 3,
-        // and exactly D = -15, -20 lack certificates by F = 3.
-        require(eligible_by_f[2] == 8, "8 quadratic fields at F = 2");
-        require(eligible_by_f[2] + eligible_by_f[3] == 18, "18 quadratic fields by F = 3");
-        require(mpz_class(-20) != 0 && !provesNoGeneratorImaginary(-4, 2) && provesNoGeneratorImaginary(-20, 2),
-                "Q(sqrt(-5)): no element of norm 2; Q(i): 1 + i has norm 2");
-        // Heegner-Stark: exactly nine imaginary quadratic fields have class number one.
-        // All nine are eligible by F = 11, well inside this file (F <= 50).
+        // Completeness: every fundamental discriminant eligible at a prime <= 47 appears exactly once.
+        const long bound = 47 * 47;
+        std::size_t expected = 0;
+        for (long n = 3; n <= bound; ++n)
+            for (const long d : {n, -n}) {
+                std::string ignored;
+                if (isFundamental(d, factorize(static_cast<unsigned long>(n)), trialPrime, ignored)) {
+                    ++expected;
+                    require(seen.count(d) == 1, "missing field D=" + std::to_string(d));
+                }
+            }
+        require(seen.size() == expected, "no extra fields beyond the eligible range");
+        // R3 with genesis {2, 3}: |D| <= 4 at p = 2 (D = -3, -4); |D| <= 9 at p = 3 (adds 5, 8, -7, -8).
+        require(eligible_by_prime[2] == 2 && eligible_by_prime[2] + eligible_by_prime[3] == 6,
+                "2 rings eligible at 2, 6 by genesis frontier 3");
+        // Heegner-Stark: exactly nine imaginary quadratic fields have class number one (all |D| <= 163).
         require(imaginary_pids == std::set<long>{-163, -67, -43, -19, -11, -8, -7, -4, -3},
                 "certified imaginary PIDs are exactly the nine Heegner-Stark fields");
-        require(fields > 1000 && splits > 2000 && nocert > 3000, "vector file is complete");
+        require(fields > 300 && entries > 2000 && nocert > 900, "vector file is complete");
         std::cout << "quadratic certificates: PASS\n"
+                  << "fields eligible at a prime <= 47 (|D| <= 2209): " << expected << ", each listed once\n"
                   << "field certificates verified: " << fields << "\n"
                   << "eligible fields without certificate: " << nocert << " (imaginary, proved non-PID: "
                   << nocert_proved << ")\n"
-                  << "prime decomposition entries verified: " << splits << "\n"
+                  << "field-chain entries verified: " << entries << " (recorded split/ramified: " << recorded << ")\n"
                   << "mutations rejected: " << mutations << "\nchecks: " << checks << '\n';
         return 0;
     } catch (const std::exception& e) {
