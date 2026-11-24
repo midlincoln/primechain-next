@@ -196,6 +196,43 @@ blocks written atomically (write, sync, rename). On restart: load the
 latest snapshot and replay the blocks after it. State is never rebuilt per
 request.
 
+### A3-1. Units of consensus (2026-11-24)
+
+- Each decision is one consensus **instance (h, k)**: decision number k within
+  open block h. Range decisions are k = 0, 1, …; the last instance at height h
+  is the prime decision (closing prime plus transactions, D5–D6), which
+  seals block h.
+- Within an instance, **rounds r** follow the two-phase model: the proposer
+  proposes a value (a range batch, the closing prime plus transactions, or
+  nil); validators prevote; a quorum of prevotes (polka) locks the value and
+  leads to precommits; a quorum of precommits decides. Timeouts start at 1 s
+  and double, capped at 60 s (D11).
+- **Proposer:** validator (h + k + r) mod n in validator-set order. It is
+  deterministic and independent of miners' submissions.
+- Ring blocks use their own instance sequence (ring epoch e, k) under the
+  same rules, and never block the main chain (R1).
+- Every vote signs the D10 domain: network ID, validator-set digest,
+  (h, k, r), phase, and the value hash or nil.
+- Block decisions are **objective** (validity only). Subjective policy is
+  decided by A3-2.
+
+### A3-2. Governance votes (2026-11-24)
+
+- Covered: everything v1 voted on (transfer fee, minimum reserve, validator
+  set changes), plus ring policy (κ, pauses, reward schedules for new
+  rings), protocol upgrades (new certificate and transaction versions),
+  economic parameters and, later, monetary-layer rules.
+- **Votes do not depend on the chain position**, which fixes v1's
+  maintenance-mode problem: a vote signs the proposal content, effective
+  height, expiry height, sequence number, validator-set digest, network ID
+  and a governance tag, and nothing about the current tip.
+- **On-chain tally:** each validator submits its vote as its own small
+  signed transaction, at any time. Blocks include votes like transactions.
+  When a quorum is reached, the change is scheduled at its effective
+  height, which must be at least N blocks later (notice). Without a quorum
+  by the expiry height, the proposal lapses.
+- Votes count only for the validator set named by their digest.
+
 ### D14. Number types (2026-11-23)
 
 | Kind | Examples | Type | Encoding |
