@@ -165,6 +165,37 @@ The model follows real currency.
 - **Measures, at every block:** notes in validator vaults, in bank vaults,
   and with the public (M0); backing (= M0); deposits; M1 = cash + deposits.
 
+### Note design ideas (2026-11-24; display and metadata, not protocol)
+
+- **Mint marks:** each note shows the seal of the validator that signed it,
+  as US notes show their Federal Reserve district. The signature already
+  identifies the validator.
+- **Series named after ring cohorts:** for example "the Q(√17) series",
+  honoring the ring's founder, with a motif from the ring (13 = (3+2i)(3−2i),
+  fundamental units, …). Series must be retired eventually anyway, to prune
+  spent serials.
+- **Portraits and motifs by denomination,** each mathematician with the
+  mathematics the chain uses: 1 Euclid (infinitely many primes), 2 Fermat
+  (little theorem, the heart of Pratt certificates), 5 Euler (Euler product),
+  10 Gauss (the Gaussian integers and their primes), 20 Dirichlet, 50 Riemann
+  (zeta and its zeros), 100 Dedekind (ideal factorization), 500 Minkowski
+  (lattices; the PID certificates), 1,000 Noether or Ramanujan, and a special
+  Deuring note (supersingular curves, the privacy engine). Living
+  mathematicians only with their permission; otherwise honor the theorem
+  (e.g. Fermat's Last Theorem, 1995). Use public-domain portraits or
+  original drawings.
+- **Per-note picture of the class-group action:** the background is the
+  isogeny graph of the series prime (supersingular curves as nodes,
+  ℓ-isogenies for ℓ = 3, 5, 7, … as colored edges; for p = 419 the whole
+  graph fits). A walk derived from the note's own random serial is
+  highlighted, so every note is unique and literally pictures the
+  mathematics that blind-signed it, without revealing anything (the serial
+  is random and hidden from the issuer).
+- Optional: prime denominations (2, 3, 5, 7, 11, …) as branding; collectible
+  notes (prime serials, famous series) will probably arise on their own; truly
+  physical cash (paper QR notes with online swap, or secure-hardware cards)
+  is a separate project.
+
 ## Shares and BFT independence
 
 Ordinary shares let miners influence validators, but consensus must stay
