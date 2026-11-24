@@ -46,8 +46,8 @@ Supersedes an earlier draft with separate "deeds" per prime.
   equal value**; the label records which prime they belong to.
 - **A split is a spin-off.** When main-chain prime q splits or ramifies in a
   ring K, new micro-units of K's primes above q are issued (amount set by K's
-  policy) and divided by R11: 45% to the entry's miner, 35% upstream, 10% to
-  the founder, 10% to validators. The **upstream share goes pro rata to the
+  policy) and divided by R11: entry's miner, 35% upstream, founder (exact
+  split to be confirmed; no validator share). The **upstream share goes pro rata to the
   holders of q's micro-units at the moment the entry is finalized**. q itself
   is unchanged; its holders keep their q-units and additionally receive
   units of the new primes.
@@ -271,11 +271,11 @@ earn only when the economy grows:
 
 At launch validator income is close to zero (the founder runs all validators).
 
-**Open: what the freed 10% pays for.** Candidates: (1) back to miners
-(main chain 50/50, rings 50/35/15); (2) lower issuance; (3) a rule-based
-protocol treasury paying fixed bounties for predefined evidence results (no
-discretionary spending); (4) a coupon to all holders of main-chain primes, so
-bond portfolios earn from day one.
+**Decided (2026-11-24): the freed 10% goes back to the miners.** The main chain
+splits 50/50 between the prime finder and the composites (D8). The matching
+ring split, 50/35/15 (entry's miner / upstream / founder), is proposed and to
+be confirmed (R11). Not chosen: lower issuance, a rule-based bounty treasury,
+a coupon to all prime holders.
 
 ## Shares and BFT independence
 
@@ -305,7 +305,7 @@ H + 50,000, accrues 5,000 micro-units of interest.
 
 ## Bond values and policy levers
 
-- **Prime bond:** 45% of reward(p) up front, then 35% of one entry in each
+- **Prime bond:** 50% of reward(p) up front, then 35% of one entry in each
   ring where p splits or ramifies (at most one per ring). With K rings open, a
   prime earns at most K payments, typically about K/2. Its income depends on
   future ring openings.

@@ -87,21 +87,17 @@ separately. Its acceptance closes the block, and the chain frontier becomes p.
 - `reward(p)` is a protocol function of the closing prime. At launch it
   returns 1,000,000 micro-units for every p, as in v1, and later schedules
   can change it without changing the block format.
-- Split: 45% to the prime finder, 45% to composites, 10% to the validator
-  pool.
-  **Revised 2026-11-24: the 10% validator share is dropped.** Validators earn like
-  Reserve Banks (seigniorage on the primes backing cash, discount-window
-  interest, fees, spin-offs on paid-in capital), not from issuance. How the
-  freed 10% is used is **open** (`monetary-layer.md`); the engine still
-  implements the old split until that is decided.
-- The composite share is paid **per composite**: share = 45% ÷ (number of
+- Split (revised 2026-11-24): **50% to the prime finder, 50% to composites**,
+  the equal division: a block needs both contributions. It replaces 45/45/10;
+  the 10% validator share is dropped, and validators earn from services and
+  assets instead (`monetary-layer.md`).
+- The composite share is paid **per composite**: share = 50% ÷ (number of
   composites in the gap). Each range miner receives share × (composites
   accepted from their range, i.e. the accepted tail, per D4).
 - The remainder of the integer division goes to the prime finder.
-- Example, gap 1130–1150 (21 composites), prime 1151: share = 450,000 / 21 =
-  21,428, remainder 12. Y (11 composites) gets 235,708; Z (10 composites)
-  gets 214,280; the prime finder gets 450,012; the validator pool gets
-  100,000.
+- Example, gap 1130–1150 (21 composites), prime 1151: share = 500,000 / 21 =
+  23,809, remainder 11. Y (11 composites) gets 261,899; Z (10 composites)
+  gets 238,090; the prime finder gets 500,011.
 
 ### D9. Block header (2026-11-23)
 
@@ -181,8 +177,8 @@ exactly 1), an optional sender key (D15 registry), and a signature.
 
 ### D17. Automatic distributions (2026-11-24)
 
-Every epoch (N blocks), the protocol itself pays out the validator reward
-pool and the fee pool to the active validators' **payout addresses** (D10):
+Every epoch (N blocks), the protocol itself pays out the fee pool (the
+validator reward pool is gone, D8) to the active validators' **payout addresses** (D10):
 equal shares, remainder by a fixed deterministic rule. This is checked in
 replay. v1's distribution transactions and ops scripts are no longer
 needed. Participation-weighted shares (as in v1) may be added later.
