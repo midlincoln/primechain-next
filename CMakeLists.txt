@@ -370,6 +370,7 @@ if(PRIMECHAIN_BUILD_NEXT)
         next/src/merkle.cpp
         next/src/model.cpp
         next/src/engine.cpp
+        next/src/store.cpp
     )
     set_target_properties(primechain_next PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
     target_include_directories(primechain_next PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/next/include ${PRIMECHAIN_GMPXX_INCLUDE})
@@ -381,8 +382,10 @@ if(PRIMECHAIN_BUILD_NEXT)
     target_compile_options(primechain-next-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME next_codec COMMAND primechain-next-tests codec)
     add_test(NAME next_engine_rules COMMAND primechain-next-tests engine)
+    add_test(NAME next_transfers COMMAND primechain-next-tests transfers)
+    add_test(NAME next_persistence COMMAND primechain-next-tests persistence)
     add_test(NAME next_generated_chain COMMAND primechain-next-tests chain 20000)
-    set_tests_properties(next_engine_rules next_generated_chain PROPERTIES TIMEOUT 600)
+    set_tests_properties(next_engine_rules next_transfers next_persistence next_generated_chain PROPERTIES TIMEOUT 600)
 endif()
 
 option(PRIMECHAIN_BUILD_EXPERIMENTS "Build offline PrimeChain Next experiments" OFF)

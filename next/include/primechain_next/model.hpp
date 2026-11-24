@@ -76,6 +76,42 @@ struct AcceptedRange {
     std::vector<Integer> divisors;    // one per integer in [accepted_start, end]
 };
 
+// D16: a transfer of labeled micro-units. User transactions keep their signatures in blocks
+// (needed to replay balances); miner submissions do not (D15).
+struct TransferInput {
+    Integer asset;
+    Amount amount;
+};
+
+struct TransferOutput {
+    Integer asset;
+    Amount amount;
+    Address receiver;
+};
+
+struct Transfer {
+    std::uint64_t version{kVersion1};
+    std::string network_id;
+    Address sender;
+    std::vector<TransferInput> inputs;    // strictly increasing asset order, one entry per asset
+    std::vector<TransferOutput> outputs;  // several outputs allowed (bulk send), up to a policy cap
+    Integer fee_asset;
+    Amount fee;
+    std::uint64_t nonce{0};               // per sender, exactly previous + 1 (first nonce is 1)
+    Bytes public_key;                     // optional once the sender's key is registered (D15)
+    Bytes signature;
+};
+
+// D10/D18: a validator binds a hot consensus key to a cold payout address; both keys sign.
+struct ValidatorRecord {
+    std::uint64_t version{kVersion1};
+    Bytes consensus_key;
+    Address payout_address;
+    Bytes payout_key;
+    Bytes consensus_signature;
+    Bytes payout_signature;
+};
+
 struct BlockHeader {                  // D9 (no previous prime)
     std::uint64_t version{kVersion1};
     std::string network_id;
@@ -97,16 +133,21 @@ struct Block {
     BlockHeader header;
     std::vector<AcceptedRange> ranges;
     std::vector<KeyRecord> new_keys;     // keys first registered in this block
+    std::vector<Transfer> transfers;     // D6/D16: included with the closing prime, in order
     std::optional<AcceptedPrime> prime;  // absent only for the genesis seed blocks
 };
 
 Bytes rangeSigningPayload(const RangeSubmission& range);
+Bytes transferSigningPayload(const Transfer& transfer);
+Bytes validatorBindingPayload(const std::string& network_id, const ValidatorRecord& record);
 Bytes primeSigningPayload(const PrimeSubmission& prime);
 Bytes encode(const RangeSubmission& range);
 Bytes encode(const PrimeSubmission& prime);
 Bytes encode(const AcceptedRange& range);
 Bytes encode(const AcceptedPrime& prime);
 Bytes encode(const KeyRecord& key);
+Bytes encode(const Transfer& transfer);
+Bytes encode(const ValidatorRecord& record);
 Bytes encode(const BlockHeader& header);
 Bytes encode(const Block& block);
 
@@ -115,6 +156,8 @@ bool decode(const Bytes& data, PrimeSubmission& out, const Limits& limits, std::
 bool decode(const Bytes& data, AcceptedRange& out, const Limits& limits, std::string& error);
 bool decode(const Bytes& data, AcceptedPrime& out, const Limits& limits, std::string& error);
 bool decode(const Bytes& data, KeyRecord& out, const Limits& limits, std::string& error);
+bool decode(const Bytes& data, Transfer& out, const Limits& limits, std::string& error);
+bool decode(const Bytes& data, ValidatorRecord& out, const Limits& limits, std::string& error);
 bool decode(const Bytes& data, Block& out, const Limits& limits, std::string& error);
 
 Hash256 submissionHash(const RangeSubmission& range);   // covers the signature bytes

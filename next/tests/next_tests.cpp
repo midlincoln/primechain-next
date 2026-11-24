@@ -4,6 +4,9 @@
 #include "primechain_next/engine.hpp"
 #include "primechain_next/merkle.hpp"
 
+#include <algorithm>
+#include <filesystem>
+#include <cstdlib>
 #include <chrono>
 #include <fstream>
 #include <map>
@@ -334,12 +337,266 @@ void engineTests() {
     std::cout << "engine: PASS (" << checks << " checks)\n";
 }
 
+
+// ---------------------------------------------------------------- A2.2: transfers, validators, persistence
+ValidatorRecord makeValidator(const std::string& network_id, Miner& payout_out) {
+    const Miner consensus = newMiner();
+    payout_out = newMiner();
+    ValidatorRecord v;
+    v.consensus_key = consensus.key.public_key;
+    v.payout_address = payout_out.address;
+    v.payout_key = payout_out.key.public_key;
+    const Bytes payload = validatorBindingPayload(network_id, v);
+    v.consensus_signature = sign(consensus, payload);
+    v.payout_signature = sign(payout_out, payload);
+    return v;
+}
+
+Transfer makeTransfer(const Engine& e, const Miner& from, std::vector<TransferInput> inputs,
+                      std::vector<TransferOutput> outputs, const Integer& fee_asset, std::uint64_t fee, std::uint64_t nonce) {
+    Transfer t;
+    t.network_id = e.policy().network_id;
+    t.sender = from.address;
+    t.inputs = std::move(inputs);
+    t.outputs = std::move(outputs);
+    t.fee_asset = fee_asset;
+    t.fee = Amount(fee);
+    t.nonce = nonce;
+    if (!e.hasKey(from.address)) t.public_key = from.key.public_key;
+    t.signature = sign(from, transferSigningPayload(t));
+    return t;
+}
+
+// A prime asset in which `who` holds at least `min` micro-units.
+Integer assetWith(const Engine& e, const Miner& who, std::uint64_t min) {
+    for (std::uint64_t p = 5; p <= e.chainFrontier().get_ui(); p = nextPrime(p))
+        if (!(e.balance(who.address, p) < Amount(min))) return Integer(p);
+    throw std::runtime_error("no asset with enough balance");
+}
+
+void mineOne(Engine& e, const std::vector<Miner>& miners) { mineTo(e, nextPrime(e.chainFrontier().get_ui()), miners); }
+
+void transferTests() {
+    Policy policy;
+    policy.max_outputs = 8;
+    policy.epoch_length = 1000;  // no distribution during these checks
+    const std::vector<Miner> miners{newMiner(), newMiner(), newMiner()};
+    Engine e(policy);
+    mineTo(e, 200, miners);
+    const Miner& A = miners[0];
+    const Integer asset = assetWith(e, A, 10000);
+    const Amount before = e.balance(A.address, asset);
+    std::vector<Miner> receivers;
+    std::vector<TransferOutput> outs;
+    for (int i = 0; i < 5; ++i) {
+        receivers.push_back(newMiner());
+        outs.push_back({asset, Amount(10), receivers.back().address});
+    }
+    std::string error;
+    // Bulk send: one transfer, five outputs, fee 1.
+    const Transfer bulk = makeTransfer(e, A, {{asset, Amount(51)}}, outs, asset, 1, 1);
+    require(e.submitTransfer(bulk, error), "bulk transfer accepted: " + error);
+    const Amount fee_pool_before = e.feePoolBalance(asset);
+    mineOne(e, miners);
+    const Block& b = e.blocks().back();
+    require(b.transfers.size() == 1 && encode(b.transfers[0]) == encode(bulk), "transfer included with the closing prime");
+    require(b.header.transactions_root == merkleRoot({encode(bulk)}), "transactions_root over the transfer");
+    for (const auto& r : receivers) require(e.balance(r.address, asset) == Amount(10), "each output credited");
+    require(e.balance(A.address, asset) == *before.sub(Amount(51)), "sender debited inputs");
+    require(e.feePoolBalance(asset) == *fee_pool_before.add(Amount(1)), "fee reaches the validator fee pool");
+    require(e.nonce(A.address) == 1, "nonce advanced");
+
+    // Rejections at submission.
+    auto rejected = [&](Transfer t, const std::string& what, bool resign = true) {
+        if (resign) t.signature = sign(A, transferSigningPayload(t));
+        std::string reason;
+        require(!e.submitTransfer(t, reason), what + " rejected");
+    };
+    Transfer t = makeTransfer(e, A, {{asset, Amount(11)}}, {{asset, Amount(10), receivers[0].address}}, asset, 1, 2);
+    { auto bad = t; bad.signature[7] ^= 1; rejected(bad, "bad signature", false); }
+    { auto bad = t; bad.nonce = 1; rejected(bad, "replayed nonce"); }
+    { auto bad = t; bad.nonce = 0; rejected(bad, "zero nonce"); }
+    { auto bad = t; bad.inputs[0].amount = Amount(12); rejected(bad, "conservation violation"); }
+    { auto bad = t; bad.fee = Amount(0); bad.inputs[0].amount = Amount(10); rejected(bad, "fee below minimum"); }
+    { auto bad = t; bad.outputs.assign(9, {asset, Amount(1), receivers[0].address}); bad.inputs[0].amount = Amount(10);
+      rejected(bad, "too many outputs"); }
+    { auto bad = t; bad.outputs[0].asset = 104729; rejected(bad, "unknown asset"); }
+    { auto bad = t; bad.outputs[0].amount = Amount(0); bad.inputs[0].amount = Amount(1); rejected(bad, "zero output"); }
+    { auto bad = t; bad.network_id = "other"; rejected(bad, "wrong network"); }
+    {   // unknown sender without key
+        const Miner X = newMiner();
+        Transfer u = makeTransfer(e, X, {{asset, Amount(2)}}, {{asset, Amount(1), A.address}}, asset, 1, 1);
+        u.public_key.clear();
+        u.signature = sign(X, transferSigningPayload(u));
+        require(!e.submitTransfer(u, error), "unknown sender without key rejected");
+    }
+    // Dropped at inclusion: a nonce gap and an overspend (both pass submission checks).
+    const Transfer gap = makeTransfer(e, A, {{asset, Amount(2)}}, {{asset, Amount(1), receivers[1].address}}, asset, 1, 3);
+    const Miner& B = miners[1];
+    const Integer b_asset = assetWith(e, B, 1);
+    const Transfer overspend = makeTransfer(e, B, {{b_asset, *e.balance(B.address, b_asset).add(Amount(1))}},
+                                            {{b_asset, e.balance(B.address, b_asset), A.address}}, b_asset, 1, 1);
+    require(e.submitTransfer(gap, error) && e.submitTransfer(overspend, error) && e.submitTransfer(t, error),
+            "submission-time checks pass: " + error);
+    mineOne(e, miners);
+    require(e.blocks().back().transfers.size() == 1 && encode(e.blocks().back().transfers[0]) == encode(t),
+            "only the in-order, funded transfer is included");
+    require(e.nonce(A.address) == 2 && e.nonce(B.address) == 0, "dropped transfers change nothing");
+
+    // Replay with transfers; a tampered transfer amount is detected.
+    auto replayed = Engine::replay(policy, e.blocks(), error);
+    require(replayed && replayed->stateRoot() == e.stateRoot() && replayed->tip() == e.tip(), "replay with transfers: " + error);
+    auto tampered = e.blocks();
+    for (auto& blk : tampered)
+        if (!blk.transfers.empty()) { blk.transfers[0].outputs[0].amount = Amount(11); break; }
+    require(!Engine::replay(policy, tampered, error), "tampered transfer detected (signature)");
+    std::cout << "transfers: PASS (" << checks << " checks)\n";
+}
+
+void distributionTests() {
+    Policy policy;
+    policy.epoch_length = 10;
+    std::vector<Miner> payouts(3);
+    Genesis genesis;
+    for (auto& p : payouts) genesis.validators.push_back(makeValidator(policy.network_id, p));
+    {   // a broken binding is refused
+        Genesis bad = genesis;
+        bad.validators[0].payout_signature[3] ^= 1;
+        bool threw = false;
+        try { Engine x(policy, bad); } catch (const std::invalid_argument&) { threw = true; }
+        require(threw, "invalid validator binding refused");
+    }
+    const std::vector<Miner> miners{newMiner(), newMiner()};
+    Engine e(policy, genesis);
+    require(e.blocks()[0].header.validator_epoch_digest == e.blocks()[2 - 1].header.validator_epoch_digest,
+            "validator set digest in headers");
+    std::vector<Address> order;
+    for (const auto& v : e.validators()) order.push_back(v.payout_address);
+    require(std::is_sorted(order.begin(), order.end()), "validators in payout-address order");
+    // Mine through the first epoch (height 10) and check the reward pool was paid out.
+    while (e.height() < 10) mineOne(e, miners);
+    for (std::size_t i = 0; i < e.blocks().size(); ++i) {
+        const auto& blk = e.blocks()[i];
+        if (!blk.prime) continue;
+        const Integer& p = blk.prime->prime;
+        require(e.poolBalance(p) == Amount{}, "reward pool emptied at the epoch boundary");
+        for (std::size_t k = 0; k < order.size(); ++k)  // 100,000 / 3 = 33,333 rest 1 -> first validator
+            require(e.balance(order[k], p) == Amount(k == 0 ? 33334 : 33333), "equal shares, remainder to the first");
+    }
+    // Fees are distributed too: a fee of 7 in one asset during epoch 2 -> 3, 2, 2.
+    const Miner& A = miners[0];
+    const Integer asset = assetWith(e, A, 100);
+    std::vector<Amount> before;
+    for (const auto& a : order) before.push_back(e.balance(a, asset));
+    std::string error;
+    require(e.submitTransfer(makeTransfer(e, A, {{asset, Amount(17)}}, {{asset, Amount(10), miners[1].address}}, asset, 7, 1), error),
+            "fee transfer: " + error);
+    mineOne(e, miners);
+    require(e.feePoolBalance(asset) == Amount(7), "fee accumulates until the epoch ends");
+    while (e.height() < 20) mineOne(e, miners);
+    require(e.feePoolBalance(asset) == Amount{}, "fee pool emptied");
+    for (std::size_t k = 0; k < order.size(); ++k)
+        require(e.balance(order[k], asset) == *before[k].add(Amount(k == 0 ? 3 : 2)), "fee shares 3, 2, 2");
+    auto replayed = Engine::replay(policy, genesis, e.blocks(), error);
+    require(replayed && replayed->stateRoot() == e.stateRoot(), "replay with distributions: " + error);
+    require(!Engine::replay(policy, Genesis{}, e.blocks(), error), "replay under a different validator set fails");
+    std::cout << "distribution: PASS (" << checks << " checks)\n";
+}
+
+void flipByte(const std::string& path, std::uintmax_t offset) {
+    std::fstream f(path, std::ios::in | std::ios::out | std::ios::binary);
+    f.seekg(static_cast<std::streamoff>(offset));
+    char c = 0;
+    f.get(c);
+    f.seekp(static_cast<std::streamoff>(offset));
+    f.put(static_cast<char>(c ^ 0x5a));
+}
+
+void persistenceTests() {
+    namespace fs = std::filesystem;
+    std::string tmpl = (fs::temp_directory_path() / "pcnext-store-XXXXXX").string();
+    require(mkdtemp(tmpl.data()) != nullptr, "temp dir");
+    const fs::path root(tmpl);
+    Policy policy;
+    policy.snapshot_interval = 7;
+    policy.epoch_length = 5;
+    std::vector<Miner> payouts(3);
+    Genesis genesis;
+    for (auto& p : payouts) genesis.validators.push_back(makeValidator(policy.network_id, p));
+    const std::vector<Miner> miners{newMiner(), newMiner()};
+    const std::string dir = (root / "chain").string();
+    std::string error;
+    Hash256 tip{}, state{};
+    std::uint64_t height = 0;
+    {
+        auto e = Engine::open(dir, policy, genesis, error);
+        require(e.has_value(), "create store: " + error);
+        mineTo(*e, 300, miners);
+        const Miner& A = miners[0];
+        const Integer asset = assetWith(*e, A, 100);
+        require(e->submitTransfer(makeTransfer(*e, A, {{asset, Amount(30)}}, {{asset, Amount(29), miners[1].address}}, asset, 1, 1), error),
+                "transfer: " + error);
+        mineOne(*e, miners);
+        tip = e->tip(); state = e->stateRoot(); height = e->height();
+    }
+    require(fs::exists(dir + "/snapshot.dat"), "snapshot written");
+    {
+        auto e = Engine::open(dir, policy, genesis, error);
+        require(e && e->tip() == tip && e->stateRoot() == state && e->height() == height, "reopen identical: " + error);
+        require(e->blocks().size() < height, "reopen loads the snapshot and replays only the tail");
+        mineOne(*e, miners);  // appending continues after reopen
+        tip = e->tip(); state = e->stateRoot(); height = e->height();
+    }
+    {
+        auto e = Engine::open(dir, policy, genesis, error);
+        require(e && e->tip() == tip && e->stateRoot() == state, "reopen after continuing: " + error);
+    }
+    // Interrupted append: an incomplete final frame is dropped, the chain is unchanged.
+    const auto size = fs::file_size(dir + "/blocks.dat");
+    { std::ofstream f(dir + "/blocks.dat", std::ios::app | std::ios::binary); f.write("\x64\0\0\0\0\0\0\0partial", 15); }
+    {
+        auto e = Engine::open(dir, policy, genesis, error);
+        require(e && e->tip() == tip && fs::file_size(dir + "/blocks.dat") == size, "incomplete final frame dropped: " + error);
+    }
+    // A damaged complete frame, a damaged snapshot, a different genesis: refused.
+    const std::string copy1 = (root / "c1").string(), copy2 = (root / "c2").string();
+    fs::copy(dir, copy1);
+    fs::copy(dir, copy2);
+    flipByte(copy1 + "/blocks.dat", size - 40);
+    require(!Engine::open(copy1, policy, genesis, error) && error.find("corrupt") != std::string::npos,
+            "damaged block frame refused: " + error);
+    flipByte(copy2 + "/snapshot.dat", 60);
+    require(!Engine::open(copy2, policy, genesis, error) && error.find("snapshot") != std::string::npos,
+            "damaged snapshot refused: " + error);
+    require(!Engine::open(dir, policy, Genesis{}, error), "different validator set refused");
+    Policy other = policy;
+    other.reward_micro_units = 2000000;
+    require(!Engine::open(dir, other, genesis, error), "different policy refused");
+    fs::remove_all(root);
+    std::cout << "persistence: PASS (" << checks << " checks)\n";
+}
+
 // ---------------------------------------------------------------- generated chain + replay
 void chainTest(std::uint64_t limit) {
     const std::vector<Miner> miners{newMiner(), newMiner(), newMiner(), newMiner()};
     Engine e;
     const auto t0 = std::chrono::steady_clock::now();
-    mineTo(e, limit, miners);
+    std::size_t transfers = 0;
+    std::vector<Miner> receivers;
+    for (int i = 0; i < 10; ++i) receivers.push_back(newMiner());
+    while (nextPrime(e.chainFrontier().get_ui()) <= limit) {
+        if (e.height() > 20 && e.height() % 50 == 0) {  // a 10-output bulk send every 50 blocks
+            const Miner& A = miners[0];
+            const Integer asset = assetWith(e, A, 1000);
+            std::vector<TransferOutput> outs;
+            for (const auto& r : receivers) outs.push_back({asset, Amount(7), r.address});
+            std::string error;
+            require(e.submitTransfer(makeTransfer(e, A, {{asset, Amount(71)}}, outs, asset, 1, e.nonce(A.address) + 1), error),
+                    "bulk transfer: " + error);
+            ++transfers;
+        }
+        mineOne(e, miners);
+    }
     const auto t1 = std::chrono::steady_clock::now();
     // Round-trip every block through the canonical encoding, then replay from the decoded copies.
     std::vector<Block> decoded(e.blocks().size());
@@ -354,7 +611,11 @@ void chainTest(std::uint64_t limit) {
     const auto t2 = std::chrono::steady_clock::now();
     require(replayed && replayed->stateRoot() == e.stateRoot() && replayed->tip() == e.tip(), "replay identical: " + error);
     auto secs = [](auto a, auto b) { return std::chrono::duration<double>(b - a).count(); };
+    std::size_t included = 0;
+    for (const auto& b : e.blocks()) included += b.transfers.size();
+    require(included == transfers, "every bulk transfer included");
     std::cout << "chain: PASS\nblocks: " << e.height() << " (last prime " << e.chainFrontier().get_str() << ")\n"
+              << "bulk transfers (10 outputs each): " << included << "\n"
               << "encoded chain bytes: " << bytes << " (" << bytes / e.blocks().size() << " per block)\n"
               << "mine+sign+verify seconds: " << secs(t0, t1) << "\nreplay seconds: " << secs(t1, t2) << "\n"
               << "peak RSS KiB: " << peakRssKiB() << "\nchecks: " << checks << '\n';
@@ -367,8 +628,10 @@ int main(int argc, char** argv) {
         const std::string mode = argc > 1 ? argv[1] : "engine";
         if (mode == "codec") codecTests();
         else if (mode == "engine") engineTests();
+        else if (mode == "transfers") { transferTests(); distributionTests(); }
+        else if (mode == "persistence") persistenceTests();
         else if (mode == "chain") chainTest(argc > 2 ? std::stoull(argv[2]) : 20000);
-        else throw std::runtime_error("usage: primechain-next-tests codec|engine|chain [limit]");
+        else throw std::runtime_error("usage: primechain-next-tests codec|engine|transfers|persistence|chain [limit]");
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "next test failed: " << e.what() << '\n';

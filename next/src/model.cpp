@@ -6,7 +6,8 @@ namespace primechain::next {
 namespace {
 
 enum Tag : std::uint64_t {
-    kRangeTag = 1, kPrimeTag = 2, kAcceptedTag = 3, kHeaderTag = 4, kBlockTag = 5, kAcceptedPrimeTag = 6, kKeyTag = 7
+    kRangeTag = 1, kPrimeTag = 2, kAcceptedTag = 3, kHeaderTag = 4, kBlockTag = 5, kAcceptedPrimeTag = 6, kKeyTag = 7,
+    kTransferTag = 8, kValidatorTag = 9
 };
 
 void writeRangeFields(Writer& w, const RangeSubmission& r) {
@@ -31,6 +32,36 @@ void writePrimeFields(Writer& w, const PrimeSubmission& p) {
     w.integer(p.witness);
     w.text(p.provider);
     w.bytes(p.public_key);
+}
+
+void writeTransferFields(Writer& w, const Transfer& t) {
+    w.varint(kTransferTag);
+    w.varint(t.version);
+    w.text(t.network_id);
+    w.text(t.sender);
+    w.varint(t.inputs.size());
+    for (const auto& in : t.inputs) {
+        w.integer(in.asset);
+        w.amount(in.amount);
+    }
+    w.varint(t.outputs.size());
+    for (const auto& out : t.outputs) {
+        w.integer(out.asset);
+        w.amount(out.amount);
+        w.text(out.receiver);
+    }
+    w.integer(t.fee_asset);
+    w.amount(t.fee);
+    w.varint(t.nonce);
+    w.bytes(t.public_key);
+}
+
+void writeValidatorFields(Writer& w, const ValidatorRecord& v) {
+    w.varint(kValidatorTag);
+    w.varint(v.version);
+    w.bytes(v.consensus_key);
+    w.text(v.payout_address);
+    w.bytes(v.payout_key);
 }
 
 void writeHeader(Writer& w, const BlockHeader& h) {
@@ -82,6 +113,27 @@ bool readAccepted(Reader& r, AcceptedRange& out, const Limits& l) {
     out.divisors.resize(count);
     for (auto& d : out.divisors) if (!r.integer(d)) return false;
     return true;
+}
+
+bool readTransfer(Reader& r, Transfer& t, const Limits& l) {
+    std::uint64_t n_in = 0, n_out = 0;
+    if (!expectTag(r, kTransferTag, t.version) || !r.text(t.network_id, l.max_text) || !r.text(t.sender, l.max_text) ||
+        !r.varint(n_in) || n_in > l.max_list)
+        return false;
+    t.inputs.resize(n_in);
+    for (auto& in : t.inputs) if (!r.integer(in.asset) || !r.amount(in.amount)) return false;
+    if (!r.varint(n_out) || n_out > l.max_list) return false;
+    t.outputs.resize(n_out);
+    for (auto& out : t.outputs)
+        if (!r.integer(out.asset) || !r.amount(out.amount) || !r.text(out.receiver, l.max_text)) return false;
+    return r.integer(t.fee_asset) && r.amount(t.fee) && r.varint(t.nonce) && r.bytes(t.public_key, l.max_key_bytes) &&
+           r.bytes(t.signature, l.max_signature_bytes);
+}
+
+bool readValidator(Reader& r, ValidatorRecord& v, const Limits& l) {
+    return expectTag(r, kValidatorTag, v.version) && r.bytes(v.consensus_key, l.max_key_bytes) &&
+           r.text(v.payout_address, l.max_text) && r.bytes(v.payout_key, l.max_key_bytes) &&
+           r.bytes(v.consensus_signature, l.max_signature_bytes) && r.bytes(v.payout_signature, l.max_signature_bytes);
 }
 
 bool readAcceptedPrime(Reader& r, AcceptedPrime& out, const Limits& l) {
@@ -155,6 +207,36 @@ Bytes encode(const AcceptedRange& range) {
     return w.data();
 }
 
+Bytes transferSigningPayload(const Transfer& transfer) {
+    Writer w;
+    w.text("primechain-next/transfer");
+    writeTransferFields(w, transfer);
+    return w.data();
+}
+
+Bytes validatorBindingPayload(const std::string& network_id, const ValidatorRecord& record) {
+    Writer w;
+    w.text("primechain-next/validator-binding");
+    w.text(network_id);
+    writeValidatorFields(w, record);
+    return w.data();
+}
+
+Bytes encode(const Transfer& transfer) {
+    Writer w;
+    writeTransferFields(w, transfer);
+    w.bytes(transfer.signature);
+    return w.data();
+}
+
+Bytes encode(const ValidatorRecord& record) {
+    Writer w;
+    writeValidatorFields(w, record);
+    w.bytes(record.consensus_signature);
+    w.bytes(record.payout_signature);
+    return w.data();
+}
+
 Bytes encode(const AcceptedPrime& prime) {
     Writer w;
     w.varint(kAcceptedPrimeTag);
@@ -190,6 +272,8 @@ Bytes encode(const Block& block) {
     for (const auto& range : block.ranges) w.bytes(encode(range));
     w.varint(block.new_keys.size());
     for (const auto& key : block.new_keys) w.bytes(encode(key));
+    w.varint(block.transfers.size());
+    for (const auto& t : block.transfers) w.bytes(encode(t));
     w.u8(block.prime ? 1 : 0);
     if (block.prime) w.bytes(encode(*block.prime));
     return w.data();
@@ -227,6 +311,16 @@ bool decode(const Bytes& data, Block& out, const Limits& limits, std::string& er
             std::string inner;
             if (!r.bytes(raw, limits.max_key_bytes + 1024) || !decode(raw, key, limits, inner)) return false;
         }
+        std::uint64_t transfer_count = 0;
+        if (!r.varint(transfer_count) || transfer_count > limits.max_list) return false;
+        b.transfers.resize(transfer_count);
+        for (auto& t : b.transfers) {
+            Bytes raw;
+            std::string inner;
+            if (!r.bytes(raw, limits.max_list * 64 + limits.max_key_bytes + limits.max_signature_bytes) ||
+                !decode(raw, t, limits, inner))
+                return false;
+        }
         std::uint8_t has_prime = 0;
         if (!r.u8(has_prime) || has_prime > 1) return false;
         b.prime.reset();
@@ -256,6 +350,14 @@ bool decode(const Bytes& data, AcceptedPrime& out, const Limits& limits, std::st
 
 bool decode(const Bytes& data, KeyRecord& out, const Limits& limits, std::string& error) {
     return decodeStrict(data, out, limits, error, [&](Reader& r, KeyRecord& o) { return readKey(r, o, limits); });
+}
+
+bool decode(const Bytes& data, Transfer& out, const Limits& limits, std::string& error) {
+    return decodeStrict(data, out, limits, error, [&](Reader& r, Transfer& o) { return readTransfer(r, o, limits); });
+}
+
+bool decode(const Bytes& data, ValidatorRecord& out, const Limits& limits, std::string& error) {
+    return decodeStrict(data, out, limits, error, [&](Reader& r, ValidatorRecord& o) { return readValidator(r, o, limits); });
 }
 
 Hash256 submissionHash(const PrimeSubmission& prime) {

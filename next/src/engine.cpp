@@ -3,21 +3,21 @@
 #include "primechain/crypto/signature.hpp"
 #include "primechain_next/merkle.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace primechain::next {
 namespace {
 
-Hash256 validatorEpochDigest() {
-    Writer w;
-    w.text("primechain-next/validator-epoch/unset");  // validator management arrives in A2.2/A3
-    return sha3(w.data());
-}
-
 Integer powMod(const Integer& base, const Integer& exponent, const Integer& modulus) {
     Integer out;
     mpz_powm(out.get_mpz_t(), base.get_mpz_t(), exponent.get_mpz_t(), modulus.get_mpz_t());
     return out;
+}
+
+bool verify(const Bytes& key, const Bytes& payload, const Bytes& signature) {
+    std::string ignored;
+    return primechain::crypto::verifyProtocolMessageSignature(key, payload, signature, ignored);
 }
 
 }  // namespace
@@ -29,12 +29,31 @@ Hash256 Policy::digest() const {
     w.text(network_id);
     w.varint(limits.max_integer_bytes);
     w.varint(reward_micro_units);
+    w.varint(min_fee_micro_units);
+    w.varint(max_outputs);
+    w.varint(epoch_length);
     return sha3(w.data());
 }
 
 std::uint64_t reward(const Policy& policy, const Integer&) { return policy.reward_micro_units; }
 
-Engine::Engine(Policy policy) : policy_(std::move(policy)) {
+Engine::Engine(Policy policy, Genesis genesis) : policy_(std::move(policy)), validators_(std::move(genesis.validators)) {
+    if (policy_.epoch_length == 0 || policy_.max_outputs == 0 || policy_.snapshot_interval == 0)
+        throw std::invalid_argument("policy intervals and caps must be positive");
+    // D18: each genesis validator binds its consensus key to its payout address; both sign.
+    std::set<Hash256> consensus_keys;
+    for (const auto& v : validators_) {
+        const Bytes payload = validatorBindingPayload(policy_.network_id, v);
+        if (v.version != kVersion1 || v.consensus_key.empty() || v.payout_address.empty() ||
+            v.payout_address != primechain::crypto::addressFromProtocolPublicKey(v.payout_key) ||
+            !verify(v.consensus_key, payload, v.consensus_signature) || !verify(v.payout_key, payload, v.payout_signature) ||
+            !consensus_keys.insert(sha3(v.consensus_key)).second)
+            throw std::invalid_argument("invalid genesis validator binding");
+    }
+    std::sort(validators_.begin(), validators_.end(), [](const ValidatorRecord& a, const ValidatorRecord& b) {
+        return a.payout_address != b.payout_address ? a.payout_address < b.payout_address
+                                                    : sha3(a.consensus_key) < sha3(b.consensus_key);
+    });
     // D7: genesis seeds the primes 2 (#1) and 3 (#2), with no rewards.
     for (const unsigned long p : {2ul, 3ul}) {
         chain_frontier_ = accepted_frontier_ = Integer(p);
@@ -55,12 +74,31 @@ Amount Engine::poolBalance(const Integer& asset) const {
     return it == pool_.end() ? Amount{} : it->second;
 }
 
+Amount Engine::feePoolBalance(const Integer& asset) const {
+    const auto it = fee_pool_.find(asset);
+    return it == fee_pool_.end() ? Amount{} : it->second;
+}
+
+std::uint64_t Engine::nonce(const Address& address) const {
+    const auto it = nonces_.find(address);
+    return it == nonces_.end() ? 0 : it->second;
+}
+
+Hash256 Engine::validatorEpochDigest() const {
+    Writer w;
+    w.text("primechain-next/validator-epoch");
+    w.varint(validators_.size());
+    for (const auto& v : validators_) w.bytes(encode(v));
+    return sha3(w.data());
+}
+
 Hash256 Engine::stateRoot() const {
     Writer w;
     w.text("primechain-next/state");
     w.varint(height_);
     w.integer(chain_frontier_);
     w.integer(accepted_frontier_);
+    w.hash(validatorEpochDigest());
     w.varint(asset_hashes_.size());
     for (const auto& [asset, hash] : asset_hashes_) {
         w.integer(asset);
@@ -71,6 +109,11 @@ Hash256 Engine::stateRoot() const {
         w.text(address);
         w.hash(sha3(key));
     }
+    w.varint(nonces_.size());
+    for (const auto& [address, n] : nonces_) {
+        w.text(address);
+        w.varint(n);
+    }
     return sha3(w.data());
 }
 
@@ -78,32 +121,33 @@ void Engine::refreshAssetHash(const Integer& asset) {
     Writer w;
     w.text("primechain-next/asset");
     w.integer(asset);
-    const auto& holders = balances_[asset];
-    w.varint(holders.size());
-    for (const auto& [address, amount] : holders) {
-        w.text(address);
-        w.amount(amount);
-    }
+    const auto it = balances_.find(asset);
+    w.varint(it == balances_.end() ? 0 : it->second.size());
+    if (it != balances_.end())
+        for (const auto& [address, amount] : it->second) {
+            w.text(address);
+            w.amount(amount);
+        }
     w.amount(poolBalance(asset));
+    w.amount(feePoolBalance(asset));
     asset_hashes_[asset] = sha3(w.data());
 }
 
 bool Engine::checkSigned(const Bytes& payload, const Address& provider, const Bytes& key, const Bytes& signature,
                          std::string& error) const {
     const Bytes* use = &key;
-    if (key.empty()) {  // a registered miner may omit its key
+    if (key.empty()) {  // a registered key may be omitted
         const auto it = keys_.find(provider);
         if (it == keys_.end()) {
-            error = "unknown provider: public key required on first submission";
+            error = "unknown sender: public key required on first use";
             return false;
         }
         use = &it->second;
     } else if (provider != primechain::crypto::addressFromProtocolPublicKey(key)) {
-        error = "provider address does not match public key";
+        error = "address does not match public key";
         return false;
     }
-    std::string inner;
-    if (!primechain::crypto::verifyProtocolMessageSignature(*use, payload, signature, inner)) {
+    if (!verify(*use, payload, signature)) {
         error = "invalid signature";
         return false;
     }
@@ -200,6 +244,71 @@ bool Engine::distinctPrimeFactors(const Integer& n, std::vector<Integer>& out, s
     return true;
 }
 
+// ---------------------------------------------------------------- transfers (D16)
+
+bool Engine::checkTransferForm(const Transfer& t, std::string& error) const {
+    if (t.version != kVersion1) { error = "unsupported transfer version"; return false; }
+    if (t.network_id != policy_.network_id) { error = "wrong network"; return false; }
+    if (t.sender.empty()) { error = "missing sender"; return false; }
+    if (t.nonce == 0) { error = "nonces start at 1"; return false; }
+    if (t.inputs.empty() || t.outputs.empty()) { error = "transfer needs inputs and outputs"; return false; }
+    if (t.outputs.size() > policy_.max_outputs) { error = "too many outputs"; return false; }
+    if (t.fee < Amount(policy_.min_fee_micro_units)) { error = "fee below minimum"; return false; }
+    std::map<Integer, Amount> spent;  // per asset: outputs + fee
+    auto add = [&](const Integer& asset, const Amount& amount) {
+        const auto sum = spent[asset].add(amount);
+        if (!sum) return false;
+        spent[asset] = *sum;
+        return true;
+    };
+    for (const auto& out : t.outputs) {
+        if (out.amount == Amount{} || out.receiver.empty()) { error = "empty output"; return false; }
+        if (!primes_.count(out.asset)) { error = "unknown asset " + out.asset.get_str(); return false; }
+        if (!add(out.asset, out.amount)) { error = "amount overflow"; return false; }
+    }
+    if (!primes_.count(t.fee_asset)) { error = "unknown fee asset"; return false; }
+    if (!add(t.fee_asset, t.fee)) { error = "amount overflow"; return false; }
+    for (std::size_t i = 0; i < t.inputs.size(); ++i) {
+        const auto& in = t.inputs[i];
+        if (i > 0 && !(t.inputs[i - 1].asset < in.asset)) { error = "inputs must be in strictly increasing asset order"; return false; }
+        if (in.amount == Amount{}) { error = "empty input"; return false; }
+        if (!primes_.count(in.asset)) { error = "unknown asset " + in.asset.get_str(); return false; }
+        const auto it = spent.find(in.asset);
+        if (it == spent.end() || it->second != in.amount) { error = "conservation violated for asset " + in.asset.get_str(); return false; }
+        spent.erase(it);
+    }
+    if (!spent.empty()) { error = "conservation violated: output or fee asset without input"; return false; }
+    return checkSigned(transferSigningPayload(t), t.sender, t.public_key, t.signature, error);
+}
+
+bool Engine::submitTransfer(const Transfer& t, std::string& error) {
+    if (!checkTransferForm(t, error)) return false;
+    if (t.nonce <= nonce(t.sender)) { error = "nonce already used"; return false; }
+    pending_transfers_.push_back(t);
+    return true;
+}
+
+bool Engine::applyTransfer(const Transfer& t, std::string& error) {
+    if (t.nonce != nonce(t.sender) + 1) { error = "nonce out of order"; return false; }
+    for (const auto& in : t.inputs)
+        if (balance(t.sender, in.asset) < in.amount) { error = "insufficient balance in asset " + in.asset.get_str(); return false; }
+    if (!t.public_key.empty() && !registerKey(t.sender, t.public_key, error)) return false;
+    std::set<Integer> touched;
+    for (const auto& in : t.inputs) {
+        Amount& slot = balances_[in.asset][t.sender];
+        slot = *slot.sub(in.amount);  // checked above
+        if (slot == Amount{}) balances_[in.asset].erase(t.sender);
+        touched.insert(in.asset);
+    }
+    for (const auto& out : t.outputs) credit(balances_[out.asset], out.receiver, out.amount);
+    creditPool(fee_pool_, t.fee_asset, t.fee);
+    nonces_[t.sender] = t.nonce;
+    for (const auto& asset : touched) refreshAssetHash(asset);
+    return true;
+}
+
+// ---------------------------------------------------------------- closing prime, rewards, distribution
+
 bool Engine::checkPrimeArithmetic(const Integer& p, const Integer& witness, std::string& error) const {
     if (accepted_frontier_ <= chain_frontier_) { error = "gap has no accepted composites"; return false; }
     if (p != accepted_frontier_ + 1) { error = "gap is not fully covered before the prime"; return false; }
@@ -229,18 +338,45 @@ bool Engine::registerKey(const Address& address, const Bytes& key, std::string& 
         error = "key record address does not match its key";
         return false;
     }
-    const auto it = keys_.find(address);
-    if (it != keys_.end()) return true;  // already registered; nothing to add
+    if (keys_.count(address)) return true;  // already registered; nothing to add
     keys_.emplace(address, key);
     new_keys_.push_back({address, key});
     return true;
 }
 
-void Engine::credit(const Address* address, const Integer& asset, const Amount& amount) {
-    Amount& slot = address ? balances_[asset][*address] : pool_[asset];
+void Engine::credit(std::map<Address, Amount>& holders, const Address& address, const Amount& amount) {
+    Amount& slot = holders[address];
     const auto sum = slot.add(amount);
     if (!sum) throw std::overflow_error("balance overflow");
     slot = *sum;
+}
+
+void Engine::creditPool(std::map<Integer, Amount>& pool, const Integer& asset, const Amount& amount) {
+    Amount& slot = pool[asset];
+    const auto sum = slot.add(amount);
+    if (!sum) throw std::overflow_error("pool overflow");
+    slot = *sum;
+}
+
+// D17: pay both pools out in equal shares to the validators' payout addresses (sorted order);
+// the remainder goes one unit each to the first validators in that order.
+void Engine::distributePools() {
+    if (validators_.empty()) return;  // no validators configured: pools keep accumulating
+    const u128 n = validators_.size();
+    std::set<Integer> touched;
+    for (auto* pool : {&pool_, &fee_pool_}) {
+        for (auto& [asset, amount] : *pool) {
+            if (amount == Amount{}) continue;
+            const u128 share = amount.raw() / n, remainder = amount.raw() % n;
+            for (std::size_t i = 0; i < validators_.size(); ++i)
+                if (const u128 paid = share + (i < remainder ? 1 : 0); paid != 0)
+                    credit(balances_[asset], validators_[i].payout_address, Amount::fromRaw(paid));
+            amount = Amount{};
+            touched.insert(asset);
+        }
+        std::erase_if(*pool, [](const auto& entry) { return entry.second == Amount{}; });
+    }
+    for (const auto& asset : touched) refreshAssetHash(asset);
 }
 
 std::optional<Block> Engine::closeBlock(const PrimeSubmission& prime, std::string& error) {
@@ -251,33 +387,48 @@ std::optional<Block> Engine::closeBlock(const PrimeSubmission& prime, std::strin
     accepted.witness = prime.witness;
     accepted.provider = prime.provider;
     accepted.submission_hash = submissionHash(prime);  // covers the signature bytes
-    return closeAccepted(accepted, error);
+    const std::vector<Transfer> candidates = std::move(pending_transfers_);
+    pending_transfers_.clear();
+    return closeAccepted(accepted, candidates, /*strict=*/false, error);
 }
 
-std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, std::string& error) {
+std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, const std::vector<Transfer>& transfers,
+                                           bool strict, std::string& error) {
     if (accepted.version != kVersion1 || accepted.provider.empty()) { error = "invalid accepted prime"; return std::nullopt; }
     if (!checkPrimeArithmetic(accepted.prime, accepted.witness, error)) return std::nullopt;
-    // D8: 45% prime finder, 45% per composite, 10% validator pool; remainder to the finder.
+    // 1. Transfers in order (D6, D16). Live: invalid ones are dropped. Replay: any invalid one fails.
+    included_transfers_.clear();
+    for (const auto& t : transfers) {
+        std::string reason;
+        if (checkTransferForm(t, reason) && applyTransfer(t, reason)) {
+            included_transfers_.push_back(t);
+        } else if (strict) {
+            error = "invalid transfer in block: " + reason;
+            return std::nullopt;
+        }
+    }
+    // 2. D8 rewards: 45% prime finder, 45% per composite, 10% validator pool; remainder to the finder.
     const Integer& p = accepted.prime;
     const std::uint64_t total = reward(policy_, p);
     const std::uint64_t finder = total / 100 * 45, composites_total = total / 100 * 45;
     const std::uint64_t pool = total - finder - composites_total;
-    const Integer composite_count = p - chain_frontier_ - 1;
-    const std::uint64_t count = composite_count.get_ui();
+    const std::uint64_t count = Integer(p - chain_frontier_ - 1).get_ui();
     const std::uint64_t share = composites_total / count;
+    auto& holders = balances_[p];
     for (const auto& range : open_ranges_) {
-        const Integer n = range.end - range.accepted_start + 1;
-        const auto amount = Amount(share).mul(n.get_ui());
+        const auto amount = Amount(share).mul(Integer(range.end - range.accepted_start + 1).get_ui());
         if (!amount) throw std::overflow_error("reward overflow");
-        credit(&range.provider, p, *amount);
+        credit(holders, range.provider, *amount);
     }
-    credit(&accepted.provider, p, Amount(finder + composites_total % count));
-    credit(nullptr, p, Amount(pool));
+    credit(holders, accepted.provider, Amount(finder + composites_total % count));
+    creditPool(pool_, p, Amount(pool));
     refreshAssetHash(p);
 
     chain_frontier_ = p;
     primes_.insert(p);
     pending_.clear();  // every queued batch was anchored to the previous tip
+    // 3. D17: epoch distribution when the block being sealed ends an epoch.
+    if ((height_ + 1) % policy_.epoch_length == 0) distributePools();
     return sealBlock(p, accepted);
 }
 
@@ -287,6 +438,8 @@ Block Engine::sealBlock(const Integer& prime, const std::optional<AcceptedPrime>
     open_ranges_.clear();
     block.new_keys = std::move(new_keys_);
     new_keys_.clear();
+    block.transfers = std::move(included_transfers_);
+    included_transfers_.clear();
     block.prime = accepted;
     ++height_;
     accepted_frontier_ = prime;
@@ -298,56 +451,248 @@ Block Engine::sealBlock(const Integer& prime, const std::optional<AcceptedPrime>
     h.policy_digest = policy_.digest();
     h.validator_epoch_digest = validatorEpochDigest();
     h.ranges_root = merkleRoot(rangesRootLeaves(block));
-    h.transactions_root = merkleRoot({});
+    std::vector<Bytes> tx_leaves;
+    for (const auto& t : block.transfers) tx_leaves.push_back(encode(t));
+    h.transactions_root = merkleRoot(tx_leaves);
     h.state_root = stateRoot();
     tip_ = blockHash(h);
     blocks_.push_back(block);
+    if (store_) {  // D19: fail-stop if the block cannot be made durable
+        std::string error;
+        if (!store_->append(encode(block), error)) throw std::runtime_error("persistence failure: " + error);
+        if (height_ % policy_.snapshot_interval == 0 && !store_->writeSnapshot(height_, encodeState(), error))
+            throw std::runtime_error("snapshot failure: " + error);
+    }
     return block;
 }
 
-std::optional<Engine> Engine::replay(const Policy& policy, const std::vector<Block>& blocks, std::string& error) {
-    Engine e(policy);
+// ---------------------------------------------------------------- replay and persistence (D19)
+
+bool Engine::applyBlock(const Block& b, std::string& error) {
+    const std::string where = " at height " + std::to_string(b.header.height);
+    if (b.header.height != height_ + 1 || b.header.previous_hash != tip_) {
+        error = "broken linkage" + where;
+        return false;
+    }
+    for (const auto& range : b.ranges) {
+        if (range.version != kVersion1 || range.provider.empty() || range.accepted_start != accepted_frontier_ + 1 ||
+            !checkDivisors(range.accepted_start, range.end, range.divisors, error)) {
+            if (error.empty()) error = "invalid accepted range";
+            error += where;
+            return false;
+        }
+        applyAccepted(range);
+    }
+    for (const auto& key : b.new_keys) {
+        if (keys_.count(key.address) || !registerKey(key.address, key.public_key, error)) {
+            if (error.empty()) error = "key registered twice";
+            error += where;
+            return false;
+        }
+    }
+    if (!b.prime) {
+        error = "missing prime" + where;
+        return false;
+    }
+    const auto rebuilt = closeAccepted(*b.prime, b.transfers, /*strict=*/true, error);
+    if (!rebuilt) {
+        error += where;
+        return false;
+    }
+    if (encode(*rebuilt) != encode(b)) {
+        error = "block does not match its replay" + where;
+        return false;
+    }
+    return true;
+}
+
+std::optional<Engine> Engine::replay(const Policy& policy, const Genesis& genesis, const std::vector<Block>& blocks,
+                                     std::string& error) {
+    Engine e(policy, genesis);
     if (blocks.size() < 2 || encode(blocks[0]) != encode(e.blocks_[0]) || encode(blocks[1]) != encode(e.blocks_[1])) {
         error = "genesis mismatch";
         return std::nullopt;
     }
-    for (std::size_t i = 2; i < blocks.size(); ++i) {
-        const Block& b = blocks[i];
-        const std::string where = " at height " + std::to_string(b.header.height);
-        if (b.header.height != e.height_ + 1 || b.header.previous_hash != e.tip_) {
-            error = "broken linkage" + where;
-            return std::nullopt;
-        }
-        for (const auto& range : b.ranges) {
-            if (range.version != kVersion1 || range.provider.empty() || range.accepted_start != e.accepted_frontier_ + 1 ||
-                !e.checkDivisors(range.accepted_start, range.end, range.divisors, error)) {
-                if (error.empty()) error = "invalid accepted range";
-                error += where;
-                return std::nullopt;
-            }
-            e.applyAccepted(range);
-        }
-        for (const auto& key : b.new_keys) {
-            if (e.keys_.count(key.address) || !e.registerKey(key.address, key.public_key, error)) {
-                if (error.empty()) error = "key registered twice";
-                error += where;
-                return std::nullopt;
-            }
-        }
-        if (!b.prime) {
-            error = "missing prime" + where;
-            return std::nullopt;
-        }
-        const auto rebuilt = e.closeAccepted(*b.prime, error);
-        if (!rebuilt) {
-            error += where;
-            return std::nullopt;
-        }
-        if (encode(*rebuilt) != encode(b)) {
-            error = "block does not match its replay" + where;
-            return std::nullopt;
+    for (std::size_t i = 2; i < blocks.size(); ++i)
+        if (!e.applyBlock(blocks[i], error)) return std::nullopt;
+    return e;
+}
+
+Bytes Engine::encodeState() const {
+    Writer w;
+    w.text("primechain-next/state-snapshot");
+    w.varint(kVersion1);
+    w.hash(policy_.digest());
+    w.hash(validatorEpochDigest());
+    w.varint(height_);
+    w.integer(chain_frontier_);
+    w.integer(accepted_frontier_);
+    w.hash(tip_);
+    w.varint(primes_.size());
+    for (const auto& p : primes_) w.integer(p);
+    w.varint(divisors_.size());
+    for (const auto& [n, d] : divisors_) {
+        w.integer(n);
+        w.integer(d);
+    }
+    w.varint(balances_.size());
+    for (const auto& [asset, holders] : balances_) {
+        w.integer(asset);
+        w.varint(holders.size());
+        for (const auto& [address, amount] : holders) {
+            w.text(address);
+            w.amount(amount);
         }
     }
+    for (const auto* pool : {&pool_, &fee_pool_}) {
+        w.varint(pool->size());
+        for (const auto& [asset, amount] : *pool) {
+            w.integer(asset);
+            w.amount(amount);
+        }
+    }
+    w.varint(keys_.size());
+    for (const auto& [address, key] : keys_) {
+        w.text(address);
+        w.bytes(key);
+    }
+    w.varint(nonces_.size());
+    for (const auto& [address, n] : nonces_) {
+        w.text(address);
+        w.varint(n);
+    }
+    return w.data();
+}
+
+bool Engine::decodeState(const Bytes& data, std::string& error) {
+    Reader r(data, policy_.limits.max_integer_bytes);
+    std::string tag;
+    std::uint64_t version = 0, count = 0;
+    Hash256 policy_digest{}, validator_digest{};
+    const auto& l = policy_.limits;
+    auto fail = [&](const std::string& message) {
+        error = "snapshot: " + (r.error().empty() ? message : r.error());
+        return false;
+    };
+    if (!r.text(tag, 64) || tag != "primechain-next/state-snapshot" || !r.varint(version) || version != kVersion1)
+        return fail("bad header");
+    if (!r.hash(policy_digest) || policy_digest != policy_.digest()) return fail("policy mismatch");
+    if (!r.hash(validator_digest) || validator_digest != validatorEpochDigest()) return fail("genesis validator mismatch");
+    blocks_.clear();
+    primes_.clear(); divisors_.clear(); balances_.clear(); pool_.clear(); fee_pool_.clear();
+    keys_.clear(); nonces_.clear(); asset_hashes_.clear();
+    if (!r.varint(height_) || !r.integer(chain_frontier_) || !r.integer(accepted_frontier_) || !r.hash(tip_) ||
+        !r.varint(count))
+        return fail("bad frontier");
+    for (std::uint64_t i = 0; i < count; ++i) {
+        Integer p;
+        if (!r.integer(p)) return fail("bad prime");
+        primes_.insert(p);
+    }
+    if (!r.varint(count)) return fail("bad divisor count");
+    for (std::uint64_t i = 0; i < count; ++i) {
+        Integer n, d;
+        if (!r.integer(n) || !r.integer(d)) return fail("bad divisor");
+        divisors_.emplace(n, d);
+    }
+    if (!r.varint(count)) return fail("bad balances");
+    std::set<Integer> assets;
+    for (std::uint64_t i = 0; i < count; ++i) {
+        Integer asset;
+        std::uint64_t holders = 0;
+        if (!r.integer(asset) || !r.varint(holders)) return fail("bad asset");
+        auto& map = balances_[asset];
+        for (std::uint64_t j = 0; j < holders; ++j) {
+            Address address;
+            Amount amount;
+            if (!r.text(address, l.max_text) || !r.amount(amount)) return fail("bad holder");
+            map.emplace(address, amount);
+        }
+        assets.insert(asset);
+    }
+    for (auto* pool : {&pool_, &fee_pool_}) {
+        if (!r.varint(count)) return fail("bad pool");
+        for (std::uint64_t i = 0; i < count; ++i) {
+            Integer asset;
+            Amount amount;
+            if (!r.integer(asset) || !r.amount(amount)) return fail("bad pool entry");
+            pool->emplace(asset, amount);
+            assets.insert(asset);
+        }
+    }
+    if (!r.varint(count)) return fail("bad key registry");
+    for (std::uint64_t i = 0; i < count; ++i) {
+        Address address;
+        Bytes key;
+        if (!r.text(address, l.max_text) || !r.bytes(key, l.max_key_bytes)) return fail("bad key");
+        keys_.emplace(address, key);
+    }
+    if (!r.varint(count)) return fail("bad nonces");
+    for (std::uint64_t i = 0; i < count; ++i) {
+        Address address;
+        std::uint64_t n = 0;
+        if (!r.text(address, l.max_text) || !r.varint(n)) return fail("bad nonce");
+        nonces_.emplace(address, n);
+    }
+    if (!r.done()) return fail("trailing bytes");
+    for (const auto& asset : assets) refreshAssetHash(asset);
+    return true;
+}
+
+std::optional<Engine> Engine::open(const std::string& directory, const Policy& policy, const Genesis& genesis,
+                                   std::string& error) {
+    auto store = std::make_shared<Store>();
+    if (!store->open(directory, error)) return std::nullopt;
+    Engine e(policy, genesis);
+    if (store->blockCount() == 0) {  // new chain: persist the genesis seed blocks
+        for (const auto& b : e.blocks_)
+            if (!store->append(encode(b), error)) return std::nullopt;
+        e.store_ = store;
+        return e;
+    }
+    auto readBlock = [&](std::uint64_t index, Block& out) {
+        Bytes raw;
+        std::string inner;
+        if (!store->read(index, raw, error)) return false;
+        if (!decode(raw, out, policy.limits, inner)) {
+            error = "block file corrupt at frame " + std::to_string(index) + ": " + inner;
+            return false;
+        }
+        return true;
+    };
+    std::uint64_t snapshot_height = 0;
+    Bytes state;
+    bool found = false;
+    if (!store->loadSnapshot(snapshot_height, state, found, error)) return std::nullopt;
+    std::uint64_t next = 2;
+    if (found) {
+        if (snapshot_height < 2 || snapshot_height > store->blockCount()) {
+            error = "snapshot is ahead of the block file";
+            return std::nullopt;
+        }
+        if (!e.decodeState(state, error)) return std::nullopt;
+        Block anchor;
+        if (!readBlock(snapshot_height - 1, anchor)) return std::nullopt;
+        if (blockHash(anchor.header) != e.tip_ || anchor.header.height != snapshot_height) {
+            error = "snapshot does not match the block file";
+            return std::nullopt;
+        }
+        next = snapshot_height;
+    } else {
+        for (std::uint64_t i = 0; i < 2; ++i) {
+            Block b;
+            if (!readBlock(i, b)) return std::nullopt;
+            if (encode(b) != encode(e.blocks_[i])) {
+                error = "genesis mismatch in block file";
+                return std::nullopt;
+            }
+        }
+    }
+    for (std::uint64_t i = next; i < store->blockCount(); ++i) {
+        Block b;
+        if (!readBlock(i, b) || !e.applyBlock(b, error)) return std::nullopt;
+    }
+    e.store_ = store;
     return e;
 }
 
