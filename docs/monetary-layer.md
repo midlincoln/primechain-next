@@ -132,6 +132,12 @@ needed: same-label loans, and market rates per label.
 
 ## Cash (exploratory, 2026-11-23; still being thought through)
 
+**Decided (2026-11-24):** cash cryptography uses the class-group action on
+supersingular curves (isogeny-based blind signatures in the CSI-FiSh
+family), built strictly from published constructions. Cash is printed only
+once the evidence layer has certified the class group it needs. Other cash
+details stay open.
+
 The model follows real currency.
 
 - **Validators print, banks distribute.** Banks buy notes from their
