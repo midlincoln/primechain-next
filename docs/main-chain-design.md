@@ -292,6 +292,85 @@ request.
 - Errors and logs carry full context, and decisions are logged as
   structured events (F8, F19). One executable with subcommands (F11).
 
+### A3.1 implementation notes (2026-11-24)
+
+The consensus core (`next/include/primechain_next/consensus.hpp`) follows
+A3-1 to A3-3 and the model test. Choices the design left open, for review:
+
+1. **The previous certificate travels in each value.** A proposed value
+   embeds the certificate of the previous instance (like Tendermint's
+   LastCommit), so the proposer-skip counters come from agreed data and every
+   validator computes the same proposer. Counting: in that certificate's
+   instance, the proposers of rounds 0 … r−1 each gain a missed turn; the
+   round-r proposer and every signer reset to zero. Counters therefore lag
+   one instance.
+2. **Skipping:** the proposer is candidates[(h + k + r) mod |candidates|],
+   where candidates is the active set (in validator order) minus validators
+   with ≥ M missed turns; if that is empty, nobody is skipped. M is
+   `Policy::proposer_skip_after` (3).
+3. **What a certificate certifies:** the value hash of an instance, not a
+   block hash. The block is a deterministic function of the decided values,
+   and the embedded previous certificates chain all values together. A light
+   client that wants a certified header hash would need the sealed header's
+   hash added to the prime value (the dry run that checks a prime value
+   already computes it). **Open for review.**
+4. **Proposer's choice:** a valid closing prime first (a valid prime means
+   the gap is covered), otherwise the highest-end pending batch. Nil is
+   only a vote. A proposer with nothing to propose still runs the propose
+   timeout, and proposes as soon as a submission arrives during its propose
+   step.
+5. **Delivery inside the core:** newly accepted votes and proposals are
+   relayed once (gossip, which is also how equivocations reach everyone), and
+   every node re-sends what it signed in the current instance every 2 × base
+   timeout. A node that sees messages from a later instance asks the sender
+   for decisions (`SyncRequest`, answered with up to 32 `Decision`s, each
+   checked against its certificate and applied). This in-process catch-up
+   stands in for A3-4's block-file catch-up, so a node can only catch up
+   within the decision window.
+6. **Governance (A3-2) details:** a vote counts if it is signed by an active
+   validator's consensus key, names the active set's digest, is included at
+   a height ≤ expiry, its sequence is above the last passed sequence, and the
+   voter has not voted on it yet. At quorum the change is scheduled at
+   max(effective height, inclusion + `Policy::governance_notice`) and the
+   sequence is consumed. Tallies without quorum are dropped once their expiry
+   passes. Changes effective at H are applied right after sealing block
+   H − 1, so the new set signs from H on. A fee change replaces the transfer
+   minimum fee. A removal never removes the last validator.
+7. **Ready message:** a `GovernanceTx` of kind Ready, signed by the new
+   consensus key over the proposal ID, must be included at a height below H.
+   At H the binding (both keys) is checked again; a duplicate consensus key is
+   ignored. Ready entries of proposals that never pass are kept (small,
+   unbounded; to be pruned at expiry later).
+8. **Block format:** blocks gain a governance list after the transfers;
+   `transactions_root` covers transfers, then governance transactions. The
+   governance state (minimum fee, last sequence, tallies, ready messages,
+   schedule) is in the state root and the snapshot, and so is the current
+   validator set. The two new policy fields are in the policy digest.
+9. **Retention:** certificates are kept for every block in the last W
+   blocks, every K-th block, and both blocks around a set change (the last
+   block of the old set and the first of the new). Decided values are kept for
+   the window only.
+10. **Restart:** `Durable` holds the decisions of the open block (ranges of
+    the open block are not in the Store), certificates, skip counters, the
+    lock, the valid value, the round, and every vote and proposal already
+    signed in the current instance, which are re-sent and never re-signed.
+    The simulated harness captures it at the crash, which equals persisting
+    after every event because crashes fall between events; a real node must
+    write it to disk before sending.
+11. **Evidence** covers votes only; a second proposal from the same proposer
+    in a round is ignored (the first one wins).
+12. **Known limitation, n = 3:** with q = 2, one Byzantine validator can make
+    the two honest validators decide different values (test
+    `next_consensus_byzantine3` shows it). The equivocator's two conflicting
+    precommits are in the two certificates, so the evidence can always be
+    extracted afterwards. n = 4 tolerates one equivocator
+    (`next_consensus_byzantine4`).
+13. **Engine changes for consensus:** `applyDecidedRange` applies exactly the
+    decided batch; `submitPrime` queues primes; `buildPrimeContents` and
+    `checkPrimeValue` dry-run block sealing on a state copy (without block
+    history); `applyDecidedPrime` seals with strict checks and revalidates the
+    mempool (F9).
+
 ### D14. Number types (2026-11-23)
 
 | Kind | Examples | Type | Encoding |

@@ -7,7 +7,7 @@ namespace {
 
 enum Tag : std::uint64_t {
     kRangeTag = 1, kPrimeTag = 2, kAcceptedTag = 3, kHeaderTag = 4, kBlockTag = 5, kAcceptedPrimeTag = 6, kKeyTag = 7,
-    kTransferTag = 8, kValidatorTag = 9
+    kTransferTag = 8, kValidatorTag = 9, kProposalTag = 10, kGovernanceTag = 11
 };
 
 void writeRangeFields(Writer& w, const RangeSubmission& r) {
@@ -154,6 +154,26 @@ bool readHeader(Reader& r, BlockHeader& h, const Limits& l) {
            r.hash(h.finance_root);
 }
 
+bool readProposal(Reader& r, GovernanceProposal& p, const Limits& l) {
+    std::uint8_t kind = 0;
+    if (!expectTag(r, kProposalTag, p.version) || !r.text(p.network_id, l.max_text) || !r.u8(kind) || kind < 1 || kind > 3)
+        return false;
+    p.kind = static_cast<GovernanceKind>(kind);
+    if (p.kind == GovernanceKind::FeeChange && !r.varint(p.new_min_fee)) return false;
+    if (p.kind == GovernanceKind::ValidatorAdd && !readValidator(r, p.validator, l)) return false;
+    if (p.kind == GovernanceKind::ValidatorRemove && !r.hash(p.remove_key_hash)) return false;
+    return r.varint(p.effective_height) && r.varint(p.expiry_height) && r.varint(p.sequence) &&
+           r.hash(p.validator_set_digest);
+}
+
+bool readGovernance(Reader& r, GovernanceTx& t, const Limits& l) {
+    std::uint8_t kind = 0;
+    if (!expectTag(r, kGovernanceTag, t.version) || !r.u8(kind) || kind < 1 || kind > 2) return false;
+    t.kind = static_cast<GovernanceTxKind>(kind);
+    return readProposal(r, t.proposal, l) && r.bytes(t.signer_key, l.max_key_bytes) &&
+           r.bytes(t.signature, l.max_signature_bytes);
+}
+
 template <typename T, typename F>
 bool decodeStrict(const Bytes& data, T& out, const Limits& limits, std::string& error, F read) {
     Reader r(data, limits.max_integer_bytes);
@@ -257,6 +277,59 @@ Bytes encode(const KeyRecord& key) {
     return w.data();
 }
 
+Bytes encode(const GovernanceProposal& p) {
+    Writer w;
+    w.varint(kProposalTag);
+    w.varint(p.version);
+    w.text(p.network_id);
+    w.u8(static_cast<std::uint8_t>(p.kind));
+    if (p.kind == GovernanceKind::FeeChange) w.varint(p.new_min_fee);
+    if (p.kind == GovernanceKind::ValidatorAdd) {
+        const Bytes v = encode(p.validator);
+        w.raw(v);
+    }
+    if (p.kind == GovernanceKind::ValidatorRemove) w.hash(p.remove_key_hash);
+    w.varint(p.effective_height);
+    w.varint(p.expiry_height);
+    w.varint(p.sequence);
+    w.hash(p.validator_set_digest);
+    return w.data();
+}
+
+Bytes encode(const GovernanceTx& t) {
+    Writer w;
+    w.varint(kGovernanceTag);
+    w.varint(t.version);
+    w.u8(static_cast<std::uint8_t>(t.kind));
+    w.raw(encode(t.proposal));
+    w.bytes(t.signer_key);
+    w.bytes(t.signature);
+    return w.data();
+}
+
+Hash256 proposalId(const GovernanceProposal& proposal) {
+    Writer w;
+    w.text("primechain-next/governance-proposal-id");
+    w.bytes(encode(proposal));
+    return sha3(w.data());
+}
+
+Bytes governanceSigningPayload(const GovernanceTx& tx) {
+    Writer w;
+    w.text(tx.kind == GovernanceTxKind::Vote ? "primechain-next/governance-vote" : "primechain-next/governance-ready");
+    w.text(tx.proposal.network_id);
+    w.hash(proposalId(tx.proposal));
+    return w.data();
+}
+
+bool decode(const Bytes& data, GovernanceProposal& out, const Limits& limits, std::string& error) {
+    return decodeStrict(data, out, limits, error, [&](Reader& r, GovernanceProposal& o) { return readProposal(r, o, limits); });
+}
+
+bool decode(const Bytes& data, GovernanceTx& out, const Limits& limits, std::string& error) {
+    return decodeStrict(data, out, limits, error, [&](Reader& r, GovernanceTx& o) { return readGovernance(r, o, limits); });
+}
+
 Bytes encode(const BlockHeader& header) {
     Writer w;
     writeHeader(w, header);
@@ -274,6 +347,8 @@ Bytes encode(const Block& block) {
     for (const auto& key : block.new_keys) w.bytes(encode(key));
     w.varint(block.transfers.size());
     for (const auto& t : block.transfers) w.bytes(encode(t));
+    w.varint(block.governance.size());
+    for (const auto& g : block.governance) w.bytes(encode(g));
     w.u8(block.prime ? 1 : 0);
     if (block.prime) w.bytes(encode(*block.prime));
     return w.data();
@@ -319,6 +394,15 @@ bool decode(const Bytes& data, Block& out, const Limits& limits, std::string& er
             std::string inner;
             if (!r.bytes(raw, limits.max_list * 64 + limits.max_key_bytes + limits.max_signature_bytes) ||
                 !decode(raw, t, limits, inner))
+                return false;
+        }
+        std::uint64_t governance_count = 0;
+        if (!r.varint(governance_count) || governance_count > limits.max_list) return false;
+        b.governance.resize(governance_count);
+        for (auto& g : b.governance) {
+            Bytes raw;
+            std::string inner;
+            if (!r.bytes(raw, 4 * limits.max_key_bytes + 2 * limits.max_signature_bytes + 1024) || !decode(raw, g, limits, inner))
                 return false;
         }
         std::uint8_t has_prime = 0;

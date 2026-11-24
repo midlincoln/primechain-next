@@ -21,6 +21,7 @@ public:
     void bytes(const Bytes& value);
     void text(const std::string& value);
     void hash(const Hash256& value);
+    void raw(const Bytes& value) { out_.insert(out_.end(), value.begin(), value.end()); }  // already-encoded record
     const Bytes& data() const { return out_; }
 
 private:

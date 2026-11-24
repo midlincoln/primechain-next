@@ -13,7 +13,8 @@ The core engine for PrimeChain Next, built from `docs/main-chain-design.md`
 | `merkle.hpp/.cpp` | SHA3-256 Merkle tree, RFC 6962 shape (no leaf duplication); leaf/node/empty domain bytes 0x00/0x01/0x02 |
 | `model.hpp/.cpp` | Range and prime submissions with domain-separated signing payloads, accepted ranges, block header (D9) and block; versioned encodings (D12) |
 | `store.hpp/.cpp` | D19 persistence: append-only block file with checksummed frames, derived height index, atomic state snapshots |
-| `engine.hpp/.cpp` | In-memory engine: genesis {2, 3} (D7); range validation and competition (D1, D2, D4); Pratt-checked closing prime (D5); per-composite rewards (D8); block sealing; full replay |
+| `engine.hpp/.cpp` | In-memory engine: genesis {2, 3} (D7); range validation and competition (D1, D2, D4); Pratt-checked closing prime (D5); per-composite rewards (D8); block sealing; full replay; governance tally (A3-2); hooks to propose, check and apply consensus values |
+| `consensus.hpp/.cpp` | A3.1 consensus core: per-instance (h, k) two-phase rounds, certificates, retention, proposer skip, equivocation evidence, durable state for restart |
 
 ## What A2.1 covers
 
@@ -94,11 +95,69 @@ chain to 20,000 with ML-DSA signatures followed by a replay).
 Generated chain to 19,997 with 45 ten-output bulk transfers: 1.48 MB
 (654 bytes per block), replay identical, peak memory about 30 MB.
 
+## A3.1: consensus core (in-process)
+
+`consensus::Node` runs one validator's consensus over its own `Engine`.
+Messages are plain values handed to `receive()` and returned as `Outgoing`;
+there is no networking yet (A3.2). The rules are Tendermint's Algorithm 1, as
+in `experiments/prime_blocks/two_phase_model_tests.cpp`: prevote on the
+round's proposal (or on a re-proposal justified by a polka at its valid
+round), lock on a polka, carry the valid value forward, precommit nil on a
+nil polka or timeout, decide on a precommit quorum in any round, and skip to
+a higher round on n − q + 1 messages from it. q = ceil(2n/3).
+
+- **Values:** a range batch (the proposer's highest-end pending batch, ties by
+  its own queue), or the closing prime plus transfers and governance
+  transactions (built by a dry run of block sealing). Every validator checks a
+  value objectively against its own engine (`validateRange`,
+  `checkPrimeValue`) and applies a decided one with `applyDecidedRange` /
+  `applyDecidedPrime`, so engines stay bit-identical. Nil is a vote, never a
+  decision.
+- **Votes and proposals** sign the D10 domain: tag, network ID, validator-set
+  digest, (h, k, r), phase, value hash or nil (ML-DSA with the consensus key).
+- **Certificates:** {h, k, r, value hash, signer bitmap, precommit signatures
+  in validator order}, verified against the set active at that instance
+  (`consensus::verifyCertificate`). Retention: permanent at every K-th block
+  and on both sides of a validator-set change; all certificates in a window
+  of the last W blocks; decided values only in the window.
+- **Proposer:** (h + k + r) mod |candidates| over the active set minus
+  validators with ≥ M missed proposer turns (M = `Policy::proposer_skip_after`,
+  3); nobody is skipped if everybody would be.
+- **Governance (A3-2):** `GovernanceTx` votes and "ready" messages ride in
+  prime decisions after the transfers and are tallied on chain; see the
+  design notes for the exact rules.
+- **Restart:** `Node::durable()` is the state to persist before sending
+  (decisions of the open block, certificates, skip counters, lock, valid
+  value, round, and every vote and proposal already signed, which are
+  re-sent, never re-signed); `Node::restore` rebuilds from it plus the engine
+  reopened from its Store.
+- **Evidence:** two different validly signed votes from one signer at one
+  (h, k, r, phase) give an `Evidence` record, kept in memory.
+
+Tests: `ctest -R next_consensus_` (a simulated network with drop, delay,
+reorder, partitions, crash and restart, a logical clock, and gossiped
+submissions; see `next/tests/consensus_tests.cpp`).
+
+Results (1 vCPU shared with a live validator, `nice -n 19`):
+
+| Test | What it shows |
+|---|---|
+| `next_consensus_chain` | n = 3, ML-DSA votes: height 2,000 (frontier 17,389), engines and blocks identical, 8,646 certificates verified, one gossiped transfer included once; 735 s wall |
+| `next_consensus_crash` | one of three down for 60 blocks: with skip (M = 3) 12 timeouts and none in the last 30 blocks, 22 s logical; without skip 160 timeouts, 97 s logical |
+| `next_consensus_g2` | the G2 scenario (lost proposal, C crashes) decides in round ≥ 1 without C, for three proposer rotations |
+| `next_consensus_partition` | n = 4, 20% loss: a 2\|2 split decides nothing, a 3\|1 split continues, the isolated node restarts from its Store and catches up |
+| `next_consensus_byzantine4` | n = 4 with one equivocator: no conflicting decisions, evidence at honest nodes |
+| `next_consensus_byzantine3` | n = 3 with one equivocator: the known fork happens; evidence extracted from the two certificates |
+| `next_consensus_governance` | lapse; fee 1 → 7 after notice; add a validator with its ready message (it then signs); remove it; an add without ready never activates; certificates verified across set changes; restart from a snapshot keeps governance state |
+| `next_consensus_retention` | K = 10, W = 5: certificates kept exactly at checkpoints and in the window |
+| `next_consensus_fuzz` | 20 seeds, n = 3–5, loss up to 29%, delays up to 420 ms, 59 partitions, 37 crash/restarts, 3,636 instances: no conflicts, progress after healing |
+
+Clean under AddressSanitizer and UndefinedBehaviorSanitizer.
+
 ## Deferred
 
 - **Monetary layer:** reserves, loans, banks.
-- **Validator changes:** adding or removing validators by quorum vote (A3).
-- **A3:** two-phase consensus, block certificates, networking.
+- **A3.2–A3.3:** networking, catch-up from the block file, a validator daemon.
 - **B3:** `extension_root` (currently zero) and the rings layer.
 - An incremental state Merkle tree. `state_root` currently hashes one cached
   digest per asset.

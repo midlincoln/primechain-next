@@ -32,14 +32,18 @@ Hash256 Policy::digest() const {
     w.varint(min_fee_micro_units);
     w.varint(max_outputs);
     w.varint(epoch_length);
+    w.varint(governance_notice);
+    w.varint(proposer_skip_after);
     return sha3(w.data());
 }
 
 std::uint64_t reward(const Policy& policy, const Integer&) { return policy.reward_micro_units; }
 
 Engine::Engine(Policy policy, Genesis genesis) : policy_(std::move(policy)), validators_(std::move(genesis.validators)) {
-    if (policy_.epoch_length == 0 || policy_.max_outputs == 0 || policy_.snapshot_interval == 0)
+    if (policy_.epoch_length == 0 || policy_.max_outputs == 0 || policy_.snapshot_interval == 0 ||
+        policy_.governance_notice == 0)
         throw std::invalid_argument("policy intervals and caps must be positive");
+    min_fee_ = policy_.min_fee_micro_units;
     // D18: each genesis validator binds its consensus key to its payout address; both sign.
     std::set<Hash256> consensus_keys;
     for (const auto& v : validators_) {
@@ -54,6 +58,7 @@ Engine::Engine(Policy policy, Genesis genesis) : policy_(std::move(policy)), val
         return a.payout_address != b.payout_address ? a.payout_address < b.payout_address
                                                     : sha3(a.consensus_key) < sha3(b.consensus_key);
     });
+    genesis_digest_ = validatorEpochDigest();
     // D7: genesis seeds the primes 2 (#1) and 3 (#2), with no rewards.
     for (const unsigned long p : {2ul, 3ul}) {
         chain_frontier_ = accepted_frontier_ = Integer(p);
@@ -114,7 +119,37 @@ Hash256 Engine::stateRoot() const {
         w.text(address);
         w.varint(n);
     }
+    w.hash(governanceDigest());
     return sha3(w.data());
+}
+
+Hash256 Engine::governanceDigest() const {
+    Writer w;
+    w.text("primechain-next/governance-state");
+    w.varint(min_fee_);
+    w.varint(last_sequence_);
+    w.varint(tallies_.size());
+    for (const auto& [id, tally] : tallies_) {
+        w.hash(id);
+        w.varint(tally.voters.size());
+        for (const auto& v : tally.voters) w.hash(v);
+    }
+    w.varint(ready_.size());
+    for (const auto& [id, height] : ready_) {
+        w.hash(id);
+        w.varint(height);
+    }
+    w.varint(scheduled_.size());
+    for (const auto& [height, proposal] : scheduled_) {
+        w.varint(height);
+        w.hash(proposalId(proposal));
+    }
+    return sha3(w.data());
+}
+
+std::size_t Engine::votesFor(const Hash256& id) const {
+    const auto it = tallies_.find(id);
+    return it == tallies_.end() ? 0 : it->second.voters.size();
 }
 
 void Engine::refreshAssetHash(const Integer& asset) {
@@ -253,7 +288,7 @@ bool Engine::checkTransferForm(const Transfer& t, std::string& error) const {
     if (t.nonce == 0) { error = "nonces start at 1"; return false; }
     if (t.inputs.empty() || t.outputs.empty()) { error = "transfer needs inputs and outputs"; return false; }
     if (t.outputs.size() > policy_.max_outputs) { error = "too many outputs"; return false; }
-    if (t.fee < Amount(policy_.min_fee_micro_units)) { error = "fee below minimum"; return false; }
+    if (t.fee < Amount(min_fee_)) { error = "fee below minimum"; return false; }
     std::map<Integer, Amount> spent;  // per asset: outputs + fee
     auto add = [&](const Integer& asset, const Amount& amount) {
         const auto sum = spent[asset].add(amount);
@@ -305,6 +340,99 @@ bool Engine::applyTransfer(const Transfer& t, std::string& error) {
     nonces_[t.sender] = t.nonce;
     for (const auto& asset : touched) refreshAssetHash(asset);
     return true;
+}
+
+// ---------------------------------------------------------------- governance (A3-2)
+
+bool Engine::checkGovernanceForm(const GovernanceTx& tx, std::string& error) const {
+    const auto& p = tx.proposal;
+    if (tx.version != kVersion1 || p.version != kVersion1) { error = "unsupported governance version"; return false; }
+    if (p.network_id != policy_.network_id) { error = "governance: wrong network"; return false; }
+    if (tx.kind == GovernanceTxKind::Ready) {
+        if (p.kind != GovernanceKind::ValidatorAdd || tx.signer_key != p.validator.consensus_key) {
+            error = "governance: ready must be signed by the validator being added";
+            return false;
+        }
+    } else if (tx.kind != GovernanceTxKind::Vote) {
+        error = "governance: unknown transaction kind";
+        return false;
+    }
+    if (!verify(tx.signer_key, governanceSigningPayload(tx), tx.signature)) {
+        error = "governance: invalid signature";
+        return false;
+    }
+    return true;
+}
+
+bool Engine::submitGovernance(const GovernanceTx& tx, std::string& error) {
+    if (!checkGovernanceForm(tx, error)) return false;
+    pending_governance_.push_back(tx);
+    return true;
+}
+
+// State checks at inclusion in the block being sealed (height_ + 1).
+bool Engine::applyGovernance(const GovernanceTx& tx, std::string& error) {
+    const std::uint64_t h = height_ + 1;
+    const Hash256 id = proposalId(tx.proposal);
+    const auto& p = tx.proposal;
+    if (tx.kind == GovernanceTxKind::Ready) {
+        if (ready_.count(id)) { error = "governance: ready already recorded"; return false; }
+        ready_.emplace(id, h);
+        return true;
+    }
+    if (p.validator_set_digest != validatorEpochDigest()) { error = "governance: vote for another validator set"; return false; }
+    if (h > p.expiry_height) { error = "governance: proposal expired"; return false; }
+    if (p.sequence <= last_sequence_) { error = "governance: sequence already used"; return false; }
+    const Hash256 voter = sha3(tx.signer_key);
+    const bool member = std::any_of(validators_.begin(), validators_.end(),
+                                    [&](const ValidatorRecord& v) { return sha3(v.consensus_key) == voter; });
+    if (!member) { error = "governance: voter is not an active validator"; return false; }
+    auto& tally = tallies_[id];
+    tally.proposal = p;
+    if (!tally.voters.insert(voter).second) { error = "governance: duplicate vote"; return false; }
+    if (tally.voters.size() >= quorum(validators_.size())) {
+        const std::uint64_t effective = std::max(p.effective_height, h + policy_.governance_notice);
+        scheduled_.emplace_back(effective, p);
+        last_sequence_ = std::max(last_sequence_, p.sequence);
+        tallies_.erase(id);
+    }
+    return true;
+}
+
+void Engine::activateScheduled(std::uint64_t height) {
+    std::vector<std::pair<std::uint64_t, GovernanceProposal>> later;
+    bool set_changed = false;
+    for (auto& [effective, p] : scheduled_) {
+        if (effective > height) { later.emplace_back(effective, std::move(p)); continue; }
+        const Hash256 id = proposalId(p);
+        if (p.kind == GovernanceKind::FeeChange) {
+            min_fee_ = p.new_min_fee;
+        } else if (p.kind == GovernanceKind::ValidatorAdd) {
+            // A3-3: a newcomer counts only if its signed "ready" was included before `height`.
+            const auto ready = ready_.find(id);
+            const auto& v = p.validator;
+            const Bytes payload = validatorBindingPayload(policy_.network_id, v);
+            const bool duplicate = std::any_of(validators_.begin(), validators_.end(),
+                                               [&](const ValidatorRecord& x) { return x.consensus_key == v.consensus_key; });
+            if (ready != ready_.end() && ready->second < height && !duplicate && v.version == kVersion1 &&
+                v.payout_address == primechain::crypto::addressFromProtocolPublicKey(v.payout_key) &&
+                verify(v.consensus_key, payload, v.consensus_signature) && verify(v.payout_key, payload, v.payout_signature)) {
+                validators_.push_back(v);
+                set_changed = true;
+            }
+        } else if (p.kind == GovernanceKind::ValidatorRemove && validators_.size() > 1) {
+            const auto before = validators_.size();
+            std::erase_if(validators_, [&](const ValidatorRecord& x) { return sha3(x.consensus_key) == p.remove_key_hash; });
+            set_changed = validators_.size() != before;
+        }
+        ready_.erase(id);
+    }
+    scheduled_ = std::move(later);
+    if (set_changed)
+        std::sort(validators_.begin(), validators_.end(), [](const ValidatorRecord& a, const ValidatorRecord& b) {
+            return a.payout_address != b.payout_address ? a.payout_address < b.payout_address
+                                                        : sha3(a.consensus_key) < sha3(b.consensus_key);
+        });
 }
 
 // ---------------------------------------------------------------- closing prime, rewards, distribution
@@ -389,11 +517,13 @@ std::optional<Block> Engine::closeBlock(const PrimeSubmission& prime, std::strin
     accepted.submission_hash = submissionHash(prime);  // covers the signature bytes
     const std::vector<Transfer> candidates = std::move(pending_transfers_);
     pending_transfers_.clear();
-    return closeAccepted(accepted, candidates, /*strict=*/false, error);
+    const std::vector<GovernanceTx> governance = std::move(pending_governance_);
+    pending_governance_.clear();
+    return closeAccepted(accepted, candidates, governance, /*strict=*/false, error);
 }
 
 std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, const std::vector<Transfer>& transfers,
-                                           bool strict, std::string& error) {
+                                           const std::vector<GovernanceTx>& governance, bool strict, std::string& error) {
     if (accepted.version != kVersion1 || accepted.provider.empty()) { error = "invalid accepted prime"; return std::nullopt; }
     if (!checkPrimeArithmetic(accepted.prime, accepted.witness, error)) return std::nullopt;
     // 1. Transfers in order (D6, D16). Live: invalid ones are dropped. Replay: any invalid one fails.
@@ -407,6 +537,18 @@ std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, const 
             return std::nullopt;
         }
     }
+    // 1b. Governance votes and ready messages (A3-2), after the transfers.
+    included_governance_.clear();
+    for (const auto& g : governance) {
+        std::string reason;
+        if (checkGovernanceForm(g, reason) && applyGovernance(g, reason)) {
+            included_governance_.push_back(g);
+        } else if (strict) {
+            error = "invalid governance transaction in block: " + reason;
+            return std::nullopt;
+        }
+    }
+    std::erase_if(tallies_, [&](const auto& entry) { return entry.second.proposal.expiry_height <= height_; });  // lapse
     // 2. D8 rewards: 45% prime finder, 45% per composite, 10% validator pool; remainder to the finder.
     const Integer& p = accepted.prime;
     const std::uint64_t total = reward(policy_, p);
@@ -427,6 +569,7 @@ std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, const 
     chain_frontier_ = p;
     primes_.insert(p);
     pending_.clear();  // every queued batch was anchored to the previous tip
+    pending_primes_.clear();
     // 3. D17: epoch distribution when the block being sealed ends an epoch.
     if ((height_ + 1) % policy_.epoch_length == 0) distributePools();
     return sealBlock(p, accepted);
@@ -440,6 +583,8 @@ Block Engine::sealBlock(const Integer& prime, const std::optional<AcceptedPrime>
     new_keys_.clear();
     block.transfers = std::move(included_transfers_);
     included_transfers_.clear();
+    block.governance = std::move(included_governance_);
+    included_governance_.clear();
     block.prime = accepted;
     ++height_;
     accepted_frontier_ = prime;
@@ -453,10 +598,12 @@ Block Engine::sealBlock(const Integer& prime, const std::optional<AcceptedPrime>
     h.ranges_root = merkleRoot(rangesRootLeaves(block));
     std::vector<Bytes> tx_leaves;
     for (const auto& t : block.transfers) tx_leaves.push_back(encode(t));
+    for (const auto& g : block.governance) tx_leaves.push_back(encode(g));
     h.transactions_root = merkleRoot(tx_leaves);
     h.state_root = stateRoot();
     tip_ = blockHash(h);
     blocks_.push_back(block);
+    activateScheduled(height_ + 1);  // A3-2/A3-3: changes effective at the next height start now
     if (store_) {  // D19: fail-stop if the block cannot be made durable
         std::string error;
         if (!store_->append(encode(block), error)) throw std::runtime_error("persistence failure: " + error);
@@ -494,7 +641,7 @@ bool Engine::applyBlock(const Block& b, std::string& error) {
         error = "missing prime" + where;
         return false;
     }
-    const auto rebuilt = closeAccepted(*b.prime, b.transfers, /*strict=*/true, error);
+    const auto rebuilt = closeAccepted(*b.prime, b.transfers, b.governance, /*strict=*/true, error);
     if (!rebuilt) {
         error += where;
         return false;
@@ -523,7 +670,9 @@ Bytes Engine::encodeState() const {
     w.text("primechain-next/state-snapshot");
     w.varint(kVersion1);
     w.hash(policy_.digest());
-    w.hash(validatorEpochDigest());
+    w.hash(genesis_digest_);
+    w.varint(validators_.size());
+    for (const auto& v : validators_) w.bytes(encode(v));
     w.varint(height_);
     w.integer(chain_frontier_);
     w.integer(accepted_frontier_);
@@ -561,6 +710,25 @@ Bytes Engine::encodeState() const {
         w.text(address);
         w.varint(n);
     }
+    // Governance state (A3-2).
+    w.varint(min_fee_);
+    w.varint(last_sequence_);
+    w.varint(tallies_.size());
+    for (const auto& [id, tally] : tallies_) {
+        w.bytes(encode(tally.proposal));
+        w.varint(tally.voters.size());
+        for (const auto& v : tally.voters) w.hash(v);
+    }
+    w.varint(ready_.size());
+    for (const auto& [id, height] : ready_) {
+        w.hash(id);
+        w.varint(height);
+    }
+    w.varint(scheduled_.size());
+    for (const auto& [height, proposal] : scheduled_) {
+        w.varint(height);
+        w.bytes(encode(proposal));
+    }
     return w.data();
 }
 
@@ -577,7 +745,17 @@ bool Engine::decodeState(const Bytes& data, std::string& error) {
     if (!r.text(tag, 64) || tag != "primechain-next/state-snapshot" || !r.varint(version) || version != kVersion1)
         return fail("bad header");
     if (!r.hash(policy_digest) || policy_digest != policy_.digest()) return fail("policy mismatch");
-    if (!r.hash(validator_digest) || validator_digest != validatorEpochDigest()) return fail("genesis validator mismatch");
+    if (!r.hash(validator_digest) || validator_digest != genesis_digest_) return fail("genesis validator mismatch");
+    if (!r.varint(count) || count > l.max_list) return fail("bad validator set");
+    std::vector<ValidatorRecord> validators(count);
+    for (auto& v : validators) {
+        Bytes raw;
+        std::string inner;
+        if (!r.bytes(raw, 2 * l.max_key_bytes + 2 * l.max_signature_bytes + l.max_text + 64) ||
+            !decode(raw, v, l, inner))
+            return fail("bad validator");
+    }
+    validators_ = std::move(validators);
     blocks_.clear();
     primes_.clear(); divisors_.clear(); balances_.clear(); pool_.clear(); fee_pool_.clear();
     keys_.clear(); nonces_.clear(); asset_hashes_.clear();
@@ -633,6 +811,38 @@ bool Engine::decodeState(const Bytes& data, std::string& error) {
         std::uint64_t n = 0;
         if (!r.text(address, l.max_text) || !r.varint(n)) return fail("bad nonce");
         nonces_.emplace(address, n);
+    }
+    tallies_.clear(); ready_.clear(); scheduled_.clear();
+    auto readProposalBytes = [&](GovernanceProposal& out) {
+        Bytes raw;
+        std::string inner;
+        return r.bytes(raw, 2 * l.max_key_bytes + 2 * l.max_signature_bytes + 1024) && decode(raw, out, l, inner);
+    };
+    if (!r.varint(min_fee_) || !r.varint(last_sequence_) || !r.varint(count)) return fail("bad governance state");
+    for (std::uint64_t i = 0; i < count; ++i) {
+        Tally tally;
+        std::uint64_t voters = 0;
+        if (!readProposalBytes(tally.proposal) || !r.varint(voters)) return fail("bad tally");
+        for (std::uint64_t j = 0; j < voters; ++j) {
+            Hash256 v{};
+            if (!r.hash(v)) return fail("bad voter");
+            tally.voters.insert(v);
+        }
+        tallies_.emplace(proposalId(tally.proposal), std::move(tally));
+    }
+    if (!r.varint(count)) return fail("bad ready set");
+    for (std::uint64_t i = 0; i < count; ++i) {
+        Hash256 id{};
+        std::uint64_t height = 0;
+        if (!r.hash(id) || !r.varint(height)) return fail("bad ready entry");
+        ready_.emplace(id, height);
+    }
+    if (!r.varint(count)) return fail("bad schedule");
+    for (std::uint64_t i = 0; i < count; ++i) {
+        std::uint64_t height = 0;
+        GovernanceProposal p;
+        if (!r.varint(height) || !readProposalBytes(p)) return fail("bad scheduled change");
+        scheduled_.emplace_back(height, std::move(p));
     }
     if (!r.done()) return fail("trailing bytes");
     for (const auto& asset : assets) refreshAssetHash(asset);
@@ -694,6 +904,114 @@ std::optional<Engine> Engine::open(const std::string& directory, const Policy& p
     }
     e.store_ = store;
     return e;
+}
+
+// ---------------------------------------------------------------- hooks for consensus (A3-1)
+
+Engine Engine::scratch() const {
+    // A dry run needs the state but not the block history, which would make every check O(height).
+    // The history is moved aside for the copy and restored; Engine is single-threaded.
+    auto& self = const_cast<Engine&>(*this);
+    std::vector<Block> history;
+    history.swap(self.blocks_);
+    Engine copy = *this;
+    self.blocks_.swap(history);
+    copy.store_.reset();  // dry runs must never touch the store
+    return copy;
+}
+
+AcceptedPrime Engine::acceptedFrom(const PrimeSubmission& prime) {
+    AcceptedPrime accepted;
+    accepted.prime = prime.prime;
+    accepted.witness = prime.witness;
+    accepted.provider = prime.provider;
+    accepted.submission_hash = submissionHash(prime);  // covers the signature bytes
+    return accepted;
+}
+
+std::optional<RangeSubmission> Engine::bestPendingRange() const {
+    const Pending* best = nullptr;
+    std::string ignored;
+    for (const auto& p : pending_) {
+        if (p.range.end <= accepted_frontier_ || !validateRange(p.range, ignored)) continue;
+        if (!best || p.range.end > best->range.end || (p.range.end == best->range.end && p.arrival < best->arrival))
+            best = &p;
+    }
+    if (!best) return std::nullopt;
+    return best->range;
+}
+
+bool Engine::applyDecidedRange(const RangeSubmission& range, std::string& error) {
+    if (!validateRange(range, error)) return false;
+    if (!range.public_key.empty() && !registerKey(range.provider, range.public_key, error)) return false;
+    AcceptedRange accepted;
+    accepted.provider = range.provider;
+    accepted.accepted_start = accepted_frontier_ + 1;
+    accepted.end = range.end;
+    accepted.submission_hash = submissionHash(range);
+    const Integer offset = accepted.accepted_start - range.start;
+    accepted.divisors.assign(range.divisors.begin() + static_cast<std::ptrdiff_t>(offset.get_ui()), range.divisors.end());
+    applyAccepted(accepted);
+    std::erase_if(pending_, [&](const Pending& p) { return p.hash == accepted.submission_hash || p.range.end <= accepted_frontier_; });
+    return true;
+}
+
+bool Engine::submitPrime(const PrimeSubmission& s, std::string& error) {
+    if (s.version != kVersion1) { error = "unsupported prime version"; return false; }
+    if (s.network_id != policy_.network_id) { error = "wrong network"; return false; }
+    if (s.anchor != tip_) { error = "prime is not anchored to the current tip"; return false; }
+    if (!checkSigned(primeSigningPayload(s), s.provider, s.public_key, s.signature, error)) return false;
+    const Hash256 h = submissionHash(s);
+    for (const auto& p : pending_primes_)
+        if (submissionHash(p) == h) return true;
+    pending_primes_.push_back(s);
+    return true;
+}
+
+std::optional<PrimeSubmission> Engine::bestPendingPrime() const {
+    std::string ignored;
+    for (const auto& p : pending_primes_)
+        if (validatePrime(p, ignored)) return p;
+    return std::nullopt;
+}
+
+std::optional<Engine::PrimeContents> Engine::buildPrimeContents(const PrimeSubmission& prime, std::string& error) const {
+    Engine sim = scratch();
+    if (!sim.validatePrime(prime, error)) return std::nullopt;
+    if (!prime.public_key.empty() && !sim.registerKey(prime.provider, prime.public_key, error)) return std::nullopt;
+    const auto block = sim.closeAccepted(acceptedFrom(prime), pending_transfers_, pending_governance_, /*strict=*/false, error);
+    if (!block) return std::nullopt;
+    return PrimeContents{block->transfers, block->governance};
+}
+
+bool Engine::checkPrimeValue(const PrimeSubmission& prime, const PrimeContents& contents, std::string& error) const {
+    Engine sim = scratch();
+    if (!sim.validatePrime(prime, error)) return false;
+    if (!prime.public_key.empty() && !sim.registerKey(prime.provider, prime.public_key, error)) return false;
+    return sim.closeAccepted(acceptedFrom(prime), contents.transfers, contents.governance, /*strict=*/true, error)
+        .has_value();
+}
+
+std::optional<Block> Engine::applyDecidedPrime(const PrimeSubmission& prime, const PrimeContents& contents,
+                                               std::string& error) {
+    if (!validatePrime(prime, error)) return std::nullopt;
+    if (!prime.public_key.empty() && !registerKey(prime.provider, prime.public_key, error)) return std::nullopt;
+    auto block = closeAccepted(acceptedFrom(prime), contents.transfers, contents.governance, /*strict=*/true, error);
+    if (!block) return std::nullopt;
+    // Mempool revalidation against the new finalized state (F9): drop what is now included or stale.
+    std::set<Hash256> included;
+    for (const auto& t : block->transfers) included.insert(sha3(encode(t)));
+    std::erase_if(pending_transfers_, [&](const Transfer& t) {
+        return included.count(sha3(encode(t))) || t.nonce <= nonce(t.sender);
+    });
+    std::set<Hash256> included_gov;
+    for (const auto& g : block->governance) included_gov.insert(sha3(encode(g)));
+    std::erase_if(pending_governance_, [&](const GovernanceTx& g) {
+        return included_gov.count(sha3(encode(g))) ||
+               (g.kind == GovernanceTxKind::Vote && (g.proposal.expiry_height <= height_ || g.proposal.sequence <= last_sequence_));
+    });
+    pending_primes_.clear();
+    return block;
 }
 
 }  // namespace primechain::next

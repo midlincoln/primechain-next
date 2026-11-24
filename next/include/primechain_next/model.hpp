@@ -112,6 +112,36 @@ struct ValidatorRecord {
     Bytes payout_signature;
 };
 
+// A3-2: governance. A proposal is position-independent: it names its content, the heights at
+// which it takes effect and expires, a sequence number and the validator set that votes on it,
+// but nothing about the chain tip, so votes stay valid while the chain moves.
+enum class GovernanceKind : std::uint8_t { FeeChange = 1, ValidatorAdd = 2, ValidatorRemove = 3 };
+
+struct GovernanceProposal {
+    std::uint64_t version{kVersion1};
+    std::string network_id;
+    GovernanceKind kind{GovernanceKind::FeeChange};
+    std::uint64_t new_min_fee{0};        // FeeChange
+    ValidatorRecord validator;           // ValidatorAdd (binding signed by both keys, D10)
+    Hash256 remove_key_hash{};           // ValidatorRemove: sha3 of the consensus key
+    std::uint64_t effective_height{0};
+    std::uint64_t expiry_height{0};      // votes are accepted only in blocks up to this height
+    std::uint64_t sequence{0};
+    Hash256 validator_set_digest{};      // the set whose votes count
+};
+
+// On-chain governance transaction: a validator's vote (signed with its consensus key), or the
+// "ready" message of a validator being added (signed with its new consensus key, A3-3).
+enum class GovernanceTxKind : std::uint8_t { Vote = 1, Ready = 2 };
+
+struct GovernanceTx {
+    std::uint64_t version{kVersion1};
+    GovernanceTxKind kind{GovernanceTxKind::Vote};
+    GovernanceProposal proposal;
+    Bytes signer_key;
+    Bytes signature;
+};
+
 struct BlockHeader {                  // D9 (no previous prime)
     std::uint64_t version{kVersion1};
     std::string network_id;
@@ -134,6 +164,7 @@ struct Block {
     std::vector<AcceptedRange> ranges;
     std::vector<KeyRecord> new_keys;     // keys first registered in this block
     std::vector<Transfer> transfers;     // D6/D16: included with the closing prime, in order
+    std::vector<GovernanceTx> governance;  // A3-2: votes and ready messages, after the transfers
     std::optional<AcceptedPrime> prime;  // absent only for the genesis seed blocks
 };
 
@@ -148,6 +179,8 @@ Bytes encode(const AcceptedPrime& prime);
 Bytes encode(const KeyRecord& key);
 Bytes encode(const Transfer& transfer);
 Bytes encode(const ValidatorRecord& record);
+Bytes encode(const GovernanceProposal& proposal);
+Bytes encode(const GovernanceTx& tx);
 Bytes encode(const BlockHeader& header);
 Bytes encode(const Block& block);
 
@@ -158,7 +191,12 @@ bool decode(const Bytes& data, AcceptedPrime& out, const Limits& limits, std::st
 bool decode(const Bytes& data, KeyRecord& out, const Limits& limits, std::string& error);
 bool decode(const Bytes& data, Transfer& out, const Limits& limits, std::string& error);
 bool decode(const Bytes& data, ValidatorRecord& out, const Limits& limits, std::string& error);
+bool decode(const Bytes& data, GovernanceProposal& out, const Limits& limits, std::string& error);
+bool decode(const Bytes& data, GovernanceTx& out, const Limits& limits, std::string& error);
 bool decode(const Bytes& data, Block& out, const Limits& limits, std::string& error);
+
+Hash256 proposalId(const GovernanceProposal& proposal);
+Bytes governanceSigningPayload(const GovernanceTx& tx);  // kind + proposal id, domain-separated
 
 Hash256 submissionHash(const RangeSubmission& range);   // covers the signature bytes
 Hash256 submissionHash(const PrimeSubmission& prime);   // covers the signature bytes

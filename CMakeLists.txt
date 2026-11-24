@@ -371,6 +371,7 @@ if(PRIMECHAIN_BUILD_NEXT)
         next/src/model.cpp
         next/src/engine.cpp
         next/src/store.cpp
+        next/src/consensus.cpp
     )
     set_target_properties(primechain_next PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
     target_include_directories(primechain_next PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/next/include ${PRIMECHAIN_GMPXX_INCLUDE})
@@ -386,6 +387,14 @@ if(PRIMECHAIN_BUILD_NEXT)
     add_test(NAME next_persistence COMMAND primechain-next-tests persistence)
     add_test(NAME next_generated_chain COMMAND primechain-next-tests chain 20000)
     set_tests_properties(next_engine_rules next_transfers next_persistence next_generated_chain PROPERTIES TIMEOUT 600)
+    add_executable(primechain-next-consensus-tests next/tests/consensus_tests.cpp)
+    set_target_properties(primechain-next-consensus-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    target_link_libraries(primechain-next-consensus-tests PRIVATE primechain_next)
+    target_compile_options(primechain-next-consensus-tests PRIVATE -Wall -Wextra -Wpedantic)
+    foreach(mode chain crash g2 partition byzantine4 byzantine3 governance retention fuzz)
+        add_test(NAME next_consensus_${mode} COMMAND primechain-next-consensus-tests ${mode})
+        set_tests_properties(next_consensus_${mode} PROPERTIES TIMEOUT 1800)
+    endforeach()
 endif()
 
 option(PRIMECHAIN_BUILD_EXPERIMENTS "Build offline PrimeChain Next experiments" OFF)

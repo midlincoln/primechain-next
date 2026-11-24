@@ -22,6 +22,8 @@ struct Policy {
     std::uint64_t max_outputs{1000};            // D16 bulk-send cap
     std::uint64_t epoch_length{100};            // D17: pools are distributed every N blocks
     std::uint64_t snapshot_interval{1000};      // D19: state snapshot every K blocks
+    std::uint64_t governance_notice{100};       // A3-2: minimum blocks between quorum and effect
+    std::uint64_t proposer_skip_after{3};       // A3-3: skip a proposer after M consecutive missed turns
     Hash256 digest() const;
 };
 
@@ -53,7 +55,32 @@ public:
     Amount feePoolBalance(const Integer& asset) const;  // validator fee pool (D16)
     std::uint64_t nonce(const Address& address) const; // last used nonce (0 = none yet)
     const std::vector<ValidatorRecord>& validators() const { return validators_; }
+    Hash256 validatorSetDigest() const { return validatorEpochDigest(); }
     Hash256 stateRoot() const;
+    static std::size_t quorum(std::size_t n) { return n == 0 ? 0 : (2 * n + 2) / 3; }  // ceil(2n/3)
+
+    // Governance (A3-2): votes and ready messages are tallied on chain.
+    bool submitGovernance(const GovernanceTx& tx, std::string& error);  // form and signature only
+    std::uint64_t minFee() const { return min_fee_; }
+    std::size_t pendingGovernanceCount() const { return pending_governance_.size(); }
+    std::size_t scheduledChanges() const { return scheduled_.size(); }
+    std::size_t votesFor(const Hash256& proposal_id) const;
+
+    // Hooks for consensus (A3-1): the proposer builds a value from its queues; every validator
+    // checks a proposed value objectively against its own state, and applies a decided value
+    // identically, so engines stay bit-identical.
+    struct PrimeContents {
+        std::vector<Transfer> transfers;
+        std::vector<GovernanceTx> governance;
+    };
+    std::optional<RangeSubmission> bestPendingRange() const;  // highest end, ties by arrival
+    bool applyDecidedRange(const RangeSubmission& range, std::string& error);
+    bool submitPrime(const PrimeSubmission& prime, std::string& error);  // form and signature only
+    std::optional<PrimeSubmission> bestPendingPrime() const;           // first one valid now
+    std::optional<PrimeContents> buildPrimeContents(const PrimeSubmission& prime, std::string& error) const;
+    bool checkPrimeValue(const PrimeSubmission& prime, const PrimeContents& contents, std::string& error) const;
+    std::optional<Block> applyDecidedPrime(const PrimeSubmission& prime, const PrimeContents& contents,
+                                           std::string& error);
 
     // Ranges (D1, D2, D4).
     bool validateRange(const RangeSubmission& range, std::string& error) const;
@@ -100,8 +127,14 @@ private:
     bool checkTransferForm(const Transfer& t, std::string& error) const;
     bool applyTransfer(const Transfer& t, std::string& error);  // state checks, then apply
     bool registerKey(const Address& address, const Bytes& key, std::string& error);
-    std::optional<Block> closeAccepted(const AcceptedPrime& prime, const std::vector<Transfer>& transfers, bool strict,
-                                       std::string& error);
+    std::optional<Block> closeAccepted(const AcceptedPrime& prime, const std::vector<Transfer>& transfers,
+                                       const std::vector<GovernanceTx>& governance, bool strict, std::string& error);
+    bool checkGovernanceForm(const GovernanceTx& tx, std::string& error) const;
+    bool applyGovernance(const GovernanceTx& tx, std::string& error);
+    void activateScheduled(std::uint64_t height);  // changes effective at `height` take effect now
+    Hash256 governanceDigest() const;
+    Engine scratch() const;                          // detached copy for dry runs (no store)
+    static AcceptedPrime acceptedFrom(const PrimeSubmission& prime);
     bool applyBlock(const Block& block, std::string& error);  // one verified replay step
     bool checkDivisors(const Integer& start, const Integer& end, const std::vector<Integer>& divisors,
                        std::string& error) const;
@@ -127,6 +160,19 @@ private:
     std::vector<Pending> pending_;
     std::vector<Transfer> pending_transfers_;
     std::vector<Transfer> included_transfers_;              // applied for the block being closed
+    std::vector<PrimeSubmission> pending_primes_;
+    std::vector<GovernanceTx> pending_governance_;
+    std::vector<GovernanceTx> included_governance_;
+    struct Tally {
+        GovernanceProposal proposal;
+        std::set<Hash256> voters;                             // sha3 of voters' consensus keys
+    };
+    std::map<Hash256, Tally> tallies_;                        // proposal id -> votes so far
+    std::map<Hash256, std::uint64_t> ready_;                  // proposal id -> height where "ready" was included
+    std::vector<std::pair<std::uint64_t, GovernanceProposal>> scheduled_;  // (effective height, proposal)
+    std::uint64_t min_fee_{1};
+    std::uint64_t last_sequence_{0};
+    Hash256 genesis_digest_{};
     std::uint64_t arrivals_{0};
     std::set<Integer> primes_;
     std::map<Integer, Integer> divisors_;                     // composite -> recorded divisor
