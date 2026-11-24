@@ -198,11 +198,13 @@ together with canonical generators modulo units.
   rings that is the **holders of p's micro-units, pro rata, at the moment the
   entry is finalized** (spin-off model, `monetary-layer.md`). For nested rings (degree ≥ 4)
   it is divided along the path, halving per step, with the remainder to the
-  main-chain finder (to be confirmed: halving or equal split). The total
+  main-chain prime's current holders (to be confirmed: halving or equal
+  split). The total
   stays 35% at any depth.
 - Only split and ramified primes have entries (R9), so inert primes pay no
-  one. A main-chain prime keeps earning for its finder each time it splits
-  in another ring.
+  one. A main-chain prime keeps earning for its **current holders**, not its
+  original finder (confirmed 2026-11-24), each time it splits or ramifies in
+  another ring.
 - The numbers are starting values, to be finalized with the economics.
 
 ## Proposed (awaiting agreement)
