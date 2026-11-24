@@ -287,7 +287,8 @@ void engineTests() {
     }
     closeWith(e, F);
     require(e.balance(X.address, 1013) == Amount(0), "loser X gets nothing");
-    require(e.balance(Y.address, 1013) == Amount(450000), "Y gets the whole composite share (3 composites)");
+    require(e.balance(Y.address, 1013) == Amount(499998), "Y gets the whole composite share (3 x 166,666)");
+    require(e.balance(F.address, 1013) == Amount(500002), "the finder gets its half plus the remainder 2");
 
     // D4 tail and D8 rewards: gap 1130-1150, prime 1151.
     mineTo(e, 1129, miners);
@@ -301,10 +302,11 @@ void engineTests() {
                 tail->divisors.size() == 10, "Z's tail 1141-1150 accepted");
     require(e.pendingCount() == 0, "W (end 1145) became stale");
     closeWith(e, F);
-    require(e.balance(Y.address, 1151) == Amount(235708), "D8: Y 11 composites -> 235,708");
-    require(e.balance(Z.address, 1151) == Amount(214280), "D8: Z 10 composites -> 214,280");
-    require(e.balance(F.address, 1151) == Amount(450012), "D8: prime finder 450,012");
-    require(e.poolBalance(1151) == Amount(100000), "D8: validator pool 100,000");
+    require(e.balance(Y.address, 1151) == Amount(261899), "D8: Y 11 composites -> 261,899");
+    require(e.balance(Z.address, 1151) == Amount(238090), "D8: Z 10 composites -> 238,090");
+    require(e.balance(F.address, 1151) == Amount(500011), "D8: prime finder 500,011");
+    require(*e.balance(Y.address, 1151).add(e.balance(Z.address, 1151))->add(e.balance(F.address, 1151)) == Amount(1000000),
+            "D8: the whole reward is paid, nothing else issued");
     require(e.balance(W.address, 1151) == Amount(0), "stale W gets nothing");
 
     // Tie: same end, earliest arrival wins (gap {1152}, prime 1153).
@@ -473,15 +475,13 @@ void distributionTests() {
     std::vector<Address> order;
     for (const auto& v : e.validators()) order.push_back(v.payout_address);
     require(std::is_sorted(order.begin(), order.end()), "validators in payout-address order");
-    // Mine through the first epoch (height 10) and check the reward pool was paid out.
+    // Mine through the first epoch (height 10) and check that validators get no share of issuance (D8).
     while (e.height() < 10) mineOne(e, miners);
     for (std::size_t i = 0; i < e.blocks().size(); ++i) {
         const auto& blk = e.blocks()[i];
         if (!blk.prime) continue;
         const Integer& p = blk.prime->prime;
-        require(e.poolBalance(p) == Amount{}, "reward pool emptied at the epoch boundary");
-        for (std::size_t k = 0; k < order.size(); ++k)  // 100,000 / 3 = 33,333 rest 1 -> first validator
-            require(e.balance(order[k], p) == Amount(k == 0 ? 33334 : 33333), "equal shares, remainder to the first");
+        for (const auto& payout : order) require(e.balance(payout, p) == Amount{}, "no validator share of the reward");
     }
     // Fees are distributed too: a fee of 7 in one asset during epoch 2 -> 3, 2, 2.
     const Miner& A = miners[0];

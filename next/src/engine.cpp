@@ -74,11 +74,6 @@ Amount Engine::balance(const Address& address, const Integer& asset) const {
     return b == a->second.end() ? Amount{} : b->second;
 }
 
-Amount Engine::poolBalance(const Integer& asset) const {
-    const auto it = pool_.find(asset);
-    return it == pool_.end() ? Amount{} : it->second;
-}
-
 Amount Engine::feePoolBalance(const Integer& asset) const {
     const auto it = fee_pool_.find(asset);
     return it == fee_pool_.end() ? Amount{} : it->second;
@@ -165,7 +160,6 @@ void Engine::refreshAssetHash(const Integer& asset) {
             w.text(address);
             w.amount(amount);
         }
-    w.amount(poolBalance(asset));
     w.amount(feePoolBalance(asset));
     asset_hashes_[asset] = sha3(w.data());
 }
@@ -499,24 +493,22 @@ void Engine::creditPool(std::map<Integer, Amount>& pool, const Integer& asset, c
     slot = *sum;
 }
 
-// D17: pay both pools out in equal shares to the validators' payout addresses (sorted order);
+// D17: pay the fee pool out in equal shares to the validators' payout addresses (sorted order);
 // the remainder goes one unit each to the first validators in that order.
 void Engine::distributePools() {
-    if (validators_.empty()) return;  // no validators configured: pools keep accumulating
+    if (validators_.empty()) return;  // no validators configured: the pool keeps accumulating
     const u128 n = validators_.size();
     std::set<Integer> touched;
-    for (auto* pool : {&pool_, &fee_pool_}) {
-        for (auto& [asset, amount] : *pool) {
-            if (amount == Amount{}) continue;
-            const u128 share = amount.raw() / n, remainder = amount.raw() % n;
-            for (std::size_t i = 0; i < validators_.size(); ++i)
-                if (const u128 paid = share + (i < remainder ? 1 : 0); paid != 0)
-                    credit(balances_[asset], validators_[i].payout_address, Amount::fromRaw(paid));
-            amount = Amount{};
-            touched.insert(asset);
-        }
-        std::erase_if(*pool, [](const auto& entry) { return entry.second == Amount{}; });
+    for (auto& [asset, amount] : fee_pool_) {
+        if (amount == Amount{}) continue;
+        const u128 share = amount.raw() / n, remainder = amount.raw() % n;
+        for (std::size_t i = 0; i < validators_.size(); ++i)
+            if (const u128 paid = share + (i < remainder ? 1 : 0); paid != 0)
+                credit(balances_[asset], validators_[i].payout_address, Amount::fromRaw(paid));
+        amount = Amount{};
+        touched.insert(asset);
     }
+    std::erase_if(fee_pool_, [](const auto& entry) { return entry.second == Amount{}; });
     for (const auto& asset : touched) refreshAssetHash(asset);
 }
 
@@ -564,11 +556,10 @@ std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, const 
     std::erase_if(tallies_, [&](const auto& entry) { return entry.second.proposal.expiry_height <= height_; });  // lapse
     // Ready messages of proposals that lapsed without passing are pruned with their tallies.
     std::erase_if(ready_, [&](const auto& e) { return readyDead(e.first, e.second.expiry, e.second.sequence, height_ + 1); });
-    // 2. D8 rewards: 45% prime finder, 45% per composite, 10% validator pool; remainder to the finder.
+    // 2. D8 rewards: half to the prime finder, half per composite; remainders to the finder.
     const Integer& p = accepted.prime;
     const std::uint64_t total = reward(policy_, p);
-    const std::uint64_t finder = total / 100 * 45, composites_total = total / 100 * 45;
-    const std::uint64_t pool = total - finder - composites_total;
+    const std::uint64_t composites_total = total / 2, finder = total - composites_total;
     const std::uint64_t count = Integer(p - chain_frontier_ - 1).get_ui();
     const std::uint64_t share = composites_total / count;
     auto& holders = balances_[p];
@@ -578,7 +569,6 @@ std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, const 
         credit(holders, range.provider, *amount);
     }
     credit(holders, accepted.provider, Amount(finder + composites_total % count));
-    creditPool(pool_, p, Amount(pool));
     refreshAssetHash(p);
 
     chain_frontier_ = p;
@@ -708,12 +698,10 @@ Bytes Engine::encodeState() const {
             w.amount(amount);
         }
     }
-    for (const auto* pool : {&pool_, &fee_pool_}) {
-        w.varint(pool->size());
-        for (const auto& [asset, amount] : *pool) {
-            w.integer(asset);
-            w.amount(amount);
-        }
+    w.varint(fee_pool_.size());
+    for (const auto& [asset, amount] : fee_pool_) {
+        w.integer(asset);
+        w.amount(amount);
     }
     w.varint(keys_.size());
     for (const auto& [address, key] : keys_) {
@@ -774,7 +762,7 @@ bool Engine::decodeState(const Bytes& data, std::string& error) {
     }
     validators_ = std::move(validators);
     blocks_.clear();
-    primes_.clear(); divisors_.clear(); balances_.clear(); pool_.clear(); fee_pool_.clear();
+    primes_.clear(); divisors_.clear(); balances_.clear(); fee_pool_.clear();
     keys_.clear(); nonces_.clear(); asset_hashes_.clear();
     if (!r.varint(height_) || !r.integer(chain_frontier_) || !r.integer(accepted_frontier_) || !r.hash(tip_) ||
         !r.varint(count))
@@ -805,15 +793,13 @@ bool Engine::decodeState(const Bytes& data, std::string& error) {
         }
         assets.insert(asset);
     }
-    for (auto* pool : {&pool_, &fee_pool_}) {
-        if (!r.varint(count)) return fail("bad pool");
-        for (std::uint64_t i = 0; i < count; ++i) {
-            Integer asset;
-            Amount amount;
-            if (!r.integer(asset) || !r.amount(amount)) return fail("bad pool entry");
-            pool->emplace(asset, amount);
-            assets.insert(asset);
-        }
+    if (!r.varint(count)) return fail("bad fee pool");
+    for (std::uint64_t i = 0; i < count; ++i) {
+        Integer asset;
+        Amount amount;
+        if (!r.integer(asset) || !r.amount(amount)) return fail("bad fee pool entry");
+        fee_pool_.emplace(asset, amount);
+        assets.insert(asset);
     }
     if (!r.varint(count)) return fail("bad key registry");
     for (std::uint64_t i = 0; i < count; ++i) {

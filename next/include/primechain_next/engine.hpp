@@ -20,7 +20,7 @@ struct Policy {
     std::uint64_t reward_micro_units{1000000};  // D8: reward(p) returns this for every p at launch
     std::uint64_t min_fee_micro_units{1};       // D16 (v1: 1 micro-unit)
     std::uint64_t max_outputs{1000};            // D16 bulk-send cap
-    std::uint64_t epoch_length{100};            // D17: pools are distributed every N blocks
+    std::uint64_t epoch_length{100};            // D17: the fee pool is distributed every N blocks
     std::uint64_t snapshot_interval{1000};      // D19: state snapshot every K blocks
     std::uint64_t governance_notice{100};       // A3-2: minimum blocks between quorum and effect
     std::uint64_t proposer_skip_after{3};       // A3-3: skip a proposer after M consecutive missed turns
@@ -51,7 +51,6 @@ public:
     std::size_t pendingCount() const { return pending_.size(); }
     std::size_t pendingTransferCount() const { return pending_transfers_.size(); }
     Amount balance(const Address& address, const Integer& asset) const;
-    Amount poolBalance(const Integer& asset) const;     // validator reward pool (D8)
     Amount feePoolBalance(const Integer& asset) const;  // validator fee pool (D16)
     std::uint64_t nonce(const Address& address) const; // last used nonce (0 = none yet)
     const std::vector<ValidatorRecord>& validators() const { return validators_; }
@@ -186,7 +185,6 @@ private:
     std::set<Integer> primes_;
     std::map<Integer, Integer> divisors_;                     // composite -> recorded divisor
     std::map<Integer, std::map<Address, Amount>> balances_;   // asset (prime) -> address -> amount
-    std::map<Integer, Amount> pool_;                          // asset -> validator reward pool
     std::map<Integer, Amount> fee_pool_;                      // asset -> validator fee pool
     std::map<Integer, Hash256> asset_hashes_;
     std::map<Address, Bytes> keys_;                           // address -> public key (registered once)

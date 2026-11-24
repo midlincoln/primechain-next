@@ -26,8 +26,8 @@ The core engine for PrimeChain Next, built from `docs/main-chain-design.md`
 - Closing prime: the gap must be covered; the Pratt witness is checked
   against the factorization of p − 1, derived from the divisors already
   recorded on chain.
-- Rewards: `reward(p)`, currently 1,000,000 micro-units per prime, split 45% to
-  the finder, 45% per composite, 10% to the validator pool. Each prime is its
+- Rewards: `reward(p)`, currently 1,000,000 micro-units per prime, split 50% to
+  the finder and 50% per composite. Each prime is its
   own asset.
 - Replay from genesis re-verifies every block and must match bit for bit.
 - Miner keys are registered once (`new_keys` in the block where a miner is
@@ -51,11 +51,11 @@ chain to 20,000 with ML-DSA signatures followed by a replay).
   balances), unlike miner submissions (D15). `transactions_root` is the
   Merkle root over the encoded transfers.
 - **Automatic distributions (D17):** when the block being sealed has a height
-  that is a multiple of `Policy::epoch_length`, both pools (reward and fee,
-  per asset) are paid out to the genesis validators' payout addresses in
-  equal shares. The remainder goes one micro-unit each to the first
-  validators in payout-address order. With no validators configured, pools
-  keep accumulating.
+  that is a multiple of `Policy::epoch_length`, the fee pool (per asset) is
+  paid out to the validators' payout addresses in equal shares. The
+  remainder goes one micro-unit each to the first validators in
+  payout-address order. With no validators configured, the pool keeps
+  accumulating. There is no validator share of block rewards (D8).
 - **Validator records (D18):** `Genesis::validators`. Each record binds a
   consensus key to a payout address and is signed by both keys; invalid
   bindings are refused. The validator set's digest is in every header
