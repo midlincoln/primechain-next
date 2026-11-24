@@ -159,6 +159,43 @@ papers must say this explicitly.
   block). Validator certificates (A3) will add ML-DSA signatures per block;
   checkpointing is to be decided there.
 
+### D16. Transfers (2026-11-24)
+
+v1's transfer model with Next's types (D14). A transfer contains: version,
+network ID, sender, inputs [(asset ID, amount)], outputs [(asset ID, amount,
+receiver)] (several outputs allowed, so a bulk send is one transaction, up
+to a policy cap), fee (asset ID, amount), nonce (per sender, increasing by
+exactly 1), an optional sender key (D15 registry), and a signature.
+
+- Conservation per asset: inputs = outputs + fee. The fee is set by policy
+  (v1: 1 micro-unit) and paid into the validator fee pool.
+- Asset IDs are main-chain primes now, and ring primes later in the same
+  format.
+- Transfers are included with the closing prime (D6), in order;
+  `transactions_root` is the Merkle root over the encoded transfers.
+
+### D17. Automatic distributions (2026-11-24)
+
+Every epoch (N blocks), the protocol itself pays out the validator reward
+pool and the fee pool to the active validators' **payout addresses** (D10):
+equal shares, remainder by a fixed deterministic rule. This is checked in
+replay. v1's distribution transactions and ops scripts are no longer
+needed. Participation-weighted shares (as in v1) may be added later.
+
+### D18. Validator records (2026-11-24)
+
+A validator record binds a consensus key to a payout address, signed by
+both (D10). In A2.2 the genesis validators are defined in genesis; adding
+and removing validators by quorum vote comes with consensus (A3), and
+reserve and admission rules with the monetary layer.
+
+### D19. Persistence (2026-11-24)
+
+An append-only block file with an index, and a state snapshot every K
+blocks written atomically (write, sync, rename). On restart: load the
+latest snapshot and replay the blocks after it. State is never rebuilt per
+request.
+
 ### D14. Number types (2026-11-23)
 
 | Kind | Examples | Type | Encoding |
