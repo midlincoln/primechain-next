@@ -66,6 +66,11 @@ Hash256 Engine::stateRoot() const {
         w.integer(asset);
         w.hash(hash);
     }
+    w.varint(keys_.size());
+    for (const auto& [address, key] : keys_) {
+        w.text(address);
+        w.hash(sha3(key));
+    }
     return sha3(w.data());
 }
 
@@ -85,12 +90,20 @@ void Engine::refreshAssetHash(const Integer& asset) {
 
 bool Engine::checkSigned(const Bytes& payload, const Address& provider, const Bytes& key, const Bytes& signature,
                          std::string& error) const {
-    if (provider != primechain::crypto::addressFromProtocolPublicKey(key)) {
+    const Bytes* use = &key;
+    if (key.empty()) {  // a registered miner may omit its key
+        const auto it = keys_.find(provider);
+        if (it == keys_.end()) {
+            error = "unknown provider: public key required on first submission";
+            return false;
+        }
+        use = &it->second;
+    } else if (provider != primechain::crypto::addressFromProtocolPublicKey(key)) {
         error = "provider address does not match public key";
         return false;
     }
     std::string inner;
-    if (!primechain::crypto::verifyProtocolMessageSignature(key, payload, signature, inner)) {
+    if (!primechain::crypto::verifyProtocolMessageSignature(*use, payload, signature, inner)) {
         error = "invalid signature";
         return false;
     }
@@ -144,6 +157,8 @@ std::optional<AcceptedRange> Engine::decideNextRange() {
         if (it->range.end > best->range.end || (it->range.end == best->range.end && it->arrival < best->arrival)) best = it;
     const Pending chosen = *best;
     pending_.erase(best);
+    std::string ignored;
+    if (!chosen.range.public_key.empty()) registerKey(chosen.range.provider, chosen.range.public_key, ignored);
 
     AcceptedRange accepted;
     accepted.provider = chosen.range.provider;
@@ -185,24 +200,40 @@ bool Engine::distinctPrimeFactors(const Integer& n, std::vector<Integer>& out, s
     return true;
 }
 
+bool Engine::checkPrimeArithmetic(const Integer& p, const Integer& witness, std::string& error) const {
+    if (accepted_frontier_ <= chain_frontier_) { error = "gap has no accepted composites"; return false; }
+    if (p != accepted_frontier_ + 1) { error = "gap is not fully covered before the prime"; return false; }
+    if (witness <= 1 || witness >= p) { error = "Pratt witness out of range"; return false; }
+    const Integer p1 = p - 1;
+    if (powMod(witness, p1, p) != 1) { error = "Pratt witness fails Fermat condition"; return false; }
+    std::vector<Integer> factors;
+    if (!distinctPrimeFactors(p1, factors, error)) return false;
+    for (const auto& q : factors)
+        if (powMod(witness, p1 / q, p) == 1) {
+            error = "Pratt witness is not a primitive root";
+            return false;
+        }
+    return true;
+}
+
 bool Engine::validatePrime(const PrimeSubmission& s, std::string& error) const {
     if (s.version != kVersion1) { error = "unsupported prime version"; return false; }
     if (s.network_id != policy_.network_id) { error = "wrong network"; return false; }
     if (s.anchor != tip_) { error = "prime is not anchored to the current tip"; return false; }
-    if (accepted_frontier_ <= chain_frontier_) { error = "gap has no accepted composites"; return false; }
-    if (s.prime != accepted_frontier_ + 1) { error = "gap is not fully covered before the prime"; return false; }
-    const Integer& p = s.prime;
-    if (s.witness <= 1 || s.witness >= p) { error = "Pratt witness out of range"; return false; }
-    const Integer p1 = p - 1;
-    if (powMod(s.witness, p1, p) != 1) { error = "Pratt witness fails Fermat condition"; return false; }
-    std::vector<Integer> factors;
-    if (!distinctPrimeFactors(p1, factors, error)) return false;
-    for (const auto& q : factors)
-        if (powMod(s.witness, p1 / q, p) == 1) {
-            error = "Pratt witness is not a primitive root";
-            return false;
-        }
+    if (!checkPrimeArithmetic(s.prime, s.witness, error)) return false;
     return checkSigned(primeSigningPayload(s), s.provider, s.public_key, s.signature, error);
+}
+
+bool Engine::registerKey(const Address& address, const Bytes& key, std::string& error) {
+    if (address != primechain::crypto::addressFromProtocolPublicKey(key)) {
+        error = "key record address does not match its key";
+        return false;
+    }
+    const auto it = keys_.find(address);
+    if (it != keys_.end()) return true;  // already registered; nothing to add
+    keys_.emplace(address, key);
+    new_keys_.push_back({address, key});
+    return true;
 }
 
 void Engine::credit(const Address* address, const Integer& asset, const Amount& amount) {
@@ -214,8 +245,20 @@ void Engine::credit(const Address* address, const Integer& asset, const Amount& 
 
 std::optional<Block> Engine::closeBlock(const PrimeSubmission& prime, std::string& error) {
     if (!validatePrime(prime, error)) return std::nullopt;
+    if (!prime.public_key.empty() && !registerKey(prime.provider, prime.public_key, error)) return std::nullopt;
+    AcceptedPrime accepted;
+    accepted.prime = prime.prime;
+    accepted.witness = prime.witness;
+    accepted.provider = prime.provider;
+    accepted.submission_hash = submissionHash(prime);  // covers the signature bytes
+    return closeAccepted(accepted, error);
+}
+
+std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, std::string& error) {
+    if (accepted.version != kVersion1 || accepted.provider.empty()) { error = "invalid accepted prime"; return std::nullopt; }
+    if (!checkPrimeArithmetic(accepted.prime, accepted.witness, error)) return std::nullopt;
     // D8: 45% prime finder, 45% per composite, 10% validator pool; remainder to the finder.
-    const Integer& p = prime.prime;
+    const Integer& p = accepted.prime;
     const std::uint64_t total = reward(policy_, p);
     const std::uint64_t finder = total / 100 * 45, composites_total = total / 100 * 45;
     const std::uint64_t pool = total - finder - composites_total;
@@ -228,21 +271,23 @@ std::optional<Block> Engine::closeBlock(const PrimeSubmission& prime, std::strin
         if (!amount) throw std::overflow_error("reward overflow");
         credit(&range.provider, p, *amount);
     }
-    credit(&prime.provider, p, Amount(finder + composites_total % count));
+    credit(&accepted.provider, p, Amount(finder + composites_total % count));
     credit(nullptr, p, Amount(pool));
     refreshAssetHash(p);
 
     chain_frontier_ = p;
     primes_.insert(p);
     pending_.clear();  // every queued batch was anchored to the previous tip
-    return sealBlock(p, prime);
+    return sealBlock(p, accepted);
 }
 
-Block Engine::sealBlock(const Integer& prime, const std::optional<PrimeSubmission>& submission) {
+Block Engine::sealBlock(const Integer& prime, const std::optional<AcceptedPrime>& accepted) {
     Block block;
     block.ranges = std::move(open_ranges_);
     open_ranges_.clear();
-    block.prime_submission = submission;
+    block.new_keys = std::move(new_keys_);
+    new_keys_.clear();
+    block.prime = accepted;
     ++height_;
     accepted_frontier_ = prime;
     BlockHeader& h = block.header;
@@ -282,11 +327,18 @@ std::optional<Engine> Engine::replay(const Policy& policy, const std::vector<Blo
             }
             e.applyAccepted(range);
         }
-        if (!b.prime_submission) {
-            error = "missing prime submission" + where;
+        for (const auto& key : b.new_keys) {
+            if (e.keys_.count(key.address) || !e.registerKey(key.address, key.public_key, error)) {
+                if (error.empty()) error = "key registered twice";
+                error += where;
+                return std::nullopt;
+            }
+        }
+        if (!b.prime) {
+            error = "missing prime" + where;
             return std::nullopt;
         }
-        const auto rebuilt = e.closeBlock(*b.prime_submission, error);
+        const auto rebuilt = e.closeAccepted(*b.prime, error);
         if (!rebuilt) {
             error += where;
             return std::nullopt;

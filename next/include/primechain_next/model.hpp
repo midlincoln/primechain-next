@@ -12,7 +12,8 @@ constexpr std::uint64_t kVersion1 = 1;
 
 // Decode limits; every decoder is bounded.
 struct Limits {
-    std::size_t max_integer_bytes{64};
+    std::size_t max_integer_bytes{64};            // main-chain integers (D14)
+    std::size_t max_certificate_integer_bytes{4096};  // certificate fields: rings, curves, landmarks
     std::size_t max_list{1u << 20};
     std::size_t max_text{256};
     std::size_t max_key_bytes{4096};
@@ -46,6 +47,24 @@ struct PrimeSubmission {
     Bytes signature;
 };
 
+// A miner key registered for the first time in a block. Each key is stored once in the chain's
+// lifetime; later submissions by the same address may omit the key.
+struct KeyRecord {
+    Address address;
+    Bytes public_key;
+};
+
+// The accepted closing prime, as stored in a block. The miner's signature is journal data: the
+// block keeps the evidence (p, witness), the attribution and the hash of the full signed
+// submission, so an archived signature can always be matched against it.
+struct AcceptedPrime {
+    std::uint64_t version{kVersion1};
+    Integer prime;
+    Integer witness;
+    Address provider;
+    Hash256 submission_hash{};
+};
+
 // The accepted part of a range submission, as stored in a block. Range signatures are
 // journal data; the block keeps the evidence, the attribution and the submission hash.
 struct AcceptedRange {
@@ -70,13 +89,15 @@ struct BlockHeader {                  // D9 (no previous prime)
     Hash256 state_root{};
     Hash256 extension_root{};
     Hash256 privacy_root{};           // reserved
+    Hash256 finance_root{};           // reserved (monetary layer)
 };
 
 struct Block {
     std::uint64_t version{kVersion1};
     BlockHeader header;
     std::vector<AcceptedRange> ranges;
-    std::optional<PrimeSubmission> prime_submission;  // absent only for the genesis seed blocks
+    std::vector<KeyRecord> new_keys;     // keys first registered in this block
+    std::optional<AcceptedPrime> prime;  // absent only for the genesis seed blocks
 };
 
 Bytes rangeSigningPayload(const RangeSubmission& range);
@@ -84,18 +105,23 @@ Bytes primeSigningPayload(const PrimeSubmission& prime);
 Bytes encode(const RangeSubmission& range);
 Bytes encode(const PrimeSubmission& prime);
 Bytes encode(const AcceptedRange& range);
+Bytes encode(const AcceptedPrime& prime);
+Bytes encode(const KeyRecord& key);
 Bytes encode(const BlockHeader& header);
 Bytes encode(const Block& block);
 
 bool decode(const Bytes& data, RangeSubmission& out, const Limits& limits, std::string& error);
 bool decode(const Bytes& data, PrimeSubmission& out, const Limits& limits, std::string& error);
 bool decode(const Bytes& data, AcceptedRange& out, const Limits& limits, std::string& error);
+bool decode(const Bytes& data, AcceptedPrime& out, const Limits& limits, std::string& error);
+bool decode(const Bytes& data, KeyRecord& out, const Limits& limits, std::string& error);
 bool decode(const Bytes& data, Block& out, const Limits& limits, std::string& error);
 
-Hash256 submissionHash(const RangeSubmission& range);
+Hash256 submissionHash(const RangeSubmission& range);   // covers the signature bytes
+Hash256 submissionHash(const PrimeSubmission& prime);   // covers the signature bytes
 Hash256 blockHash(const BlockHeader& header);
 
-// Leaves of ranges_root: each accepted range, then the prime submission (type-tagged).
+// Leaves of ranges_root: each accepted range, each new key, then the accepted prime (type-tagged).
 std::vector<Bytes> rangesRootLeaves(const Block& block);
 
 }  // namespace primechain::next

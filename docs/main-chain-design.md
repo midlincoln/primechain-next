@@ -140,11 +140,30 @@ validator requires **four independent validators** (separate operators, hosts
 and keys), with quorum 3; the protocol does not change. Documentation and
 papers must say this explicitly.
 
+### D15. Miner keys and signatures (2026-11-23)
+
+- **Key registry:** a miner's public key is stored once in the chain's
+  lifetime, in the block where the miner's work is first accepted
+  (`new_keys`). It is part of the state (`state_root`). Later submissions by
+  that address may omit the key.
+- **Miner signatures are journal data,** not permanent block contents.
+  Validators verify them at submission time, before voting. Blocks keep the
+  evidence (divisors, Pratt witness), the attribution, and the **hash of the
+  full signed submission, signature bytes included**, so an archived
+  signature can always be matched to its block. Replay verifies all
+  arithmetic and the validators' block certificate. Only an after-the-fact
+  audit of attribution against a dishonest quorum would need archived
+  signatures, and that is the same trust assumption as the rest of the
+  chain.
+- Effect (engine A2.1, chain to 19,997): 13.2 MB → 1.30 MB (576 bytes per
+  block). Validator certificates (A3) will add ML-DSA signatures per block;
+  checkpointing is to be decided there.
+
 ### D14. Number types (2026-11-23)
 
 | Kind | Examples | Type | Encoding |
 |---|---|---|---|
-| Mathematical integers | integers, primes, divisors, witnesses, discriminants, generators | arbitrary precision (GMP), checked | canonical minimal length-prefixed bytes; policy maximum size per field |
+| Mathematical integers | integers, primes, divisors, witnesses, discriminants, generators | arbitrary precision (GMP), checked | canonical minimal length-prefixed bytes; maximum size per field type (main-chain integers 64 bytes; certificate integers up to 4096 bytes) |
 | Amounts | balances, rewards, fees, supply | unsigned 128-bit, checked (overflow is rejected, never wrapped) | fixed or varint |
 | Counters | height, round, version, epoch | unsigned 64-bit | varint |
 

@@ -5,7 +5,9 @@
 namespace primechain::next {
 namespace {
 
-enum Tag : std::uint64_t { kRangeTag = 1, kPrimeTag = 2, kAcceptedTag = 3, kHeaderTag = 4, kBlockTag = 5 };
+enum Tag : std::uint64_t {
+    kRangeTag = 1, kPrimeTag = 2, kAcceptedTag = 3, kHeaderTag = 4, kBlockTag = 5, kAcceptedPrimeTag = 6, kKeyTag = 7
+};
 
 void writeRangeFields(Writer& w, const RangeSubmission& r) {
     w.varint(kRangeTag);
@@ -45,6 +47,7 @@ void writeHeader(Writer& w, const BlockHeader& h) {
     w.hash(h.state_root);
     w.hash(h.extension_root);
     w.hash(h.privacy_root);
+    w.hash(h.finance_root);
 }
 
 bool expectTag(Reader& r, std::uint64_t tag, std::uint64_t& version) {
@@ -81,11 +84,22 @@ bool readAccepted(Reader& r, AcceptedRange& out, const Limits& l) {
     return true;
 }
 
+bool readAcceptedPrime(Reader& r, AcceptedPrime& out, const Limits& l) {
+    return expectTag(r, kAcceptedPrimeTag, out.version) && r.integer(out.prime) && r.integer(out.witness) &&
+           r.text(out.provider, l.max_text) && r.hash(out.submission_hash);
+}
+
+bool readKey(Reader& r, KeyRecord& out, const Limits& l) {
+    std::uint64_t version = 0;
+    return expectTag(r, kKeyTag, version) && r.text(out.address, l.max_text) && r.bytes(out.public_key, l.max_key_bytes);
+}
+
 bool readHeader(Reader& r, BlockHeader& h, const Limits& l) {
     return expectTag(r, kHeaderTag, h.version) && r.text(h.network_id, l.max_text) && r.varint(h.height) &&
            r.hash(h.previous_hash) && r.integer(h.prime) && r.hash(h.policy_digest) &&
            r.hash(h.validator_epoch_digest) && r.hash(h.ranges_root) && r.hash(h.transactions_root) &&
-           r.hash(h.state_root) && r.hash(h.extension_root) && r.hash(h.privacy_root);
+           r.hash(h.state_root) && r.hash(h.extension_root) && r.hash(h.privacy_root) &&
+           r.hash(h.finance_root);
 }
 
 template <typename T, typename F>
@@ -141,6 +155,26 @@ Bytes encode(const AcceptedRange& range) {
     return w.data();
 }
 
+Bytes encode(const AcceptedPrime& prime) {
+    Writer w;
+    w.varint(kAcceptedPrimeTag);
+    w.varint(prime.version);
+    w.integer(prime.prime);
+    w.integer(prime.witness);
+    w.text(prime.provider);
+    w.hash(prime.submission_hash);
+    return w.data();
+}
+
+Bytes encode(const KeyRecord& key) {
+    Writer w;
+    w.varint(kKeyTag);
+    w.varint(kVersion1);
+    w.text(key.address);
+    w.bytes(key.public_key);
+    return w.data();
+}
+
 Bytes encode(const BlockHeader& header) {
     Writer w;
     writeHeader(w, header);
@@ -154,8 +188,10 @@ Bytes encode(const Block& block) {
     writeHeader(w, block.header);
     w.varint(block.ranges.size());
     for (const auto& range : block.ranges) w.bytes(encode(range));
-    w.u8(block.prime_submission ? 1 : 0);
-    if (block.prime_submission) w.bytes(encode(*block.prime_submission));
+    w.varint(block.new_keys.size());
+    for (const auto& key : block.new_keys) w.bytes(encode(key));
+    w.u8(block.prime ? 1 : 0);
+    if (block.prime) w.bytes(encode(*block.prime));
     return w.data();
 }
 
@@ -183,16 +219,24 @@ bool decode(const Bytes& data, Block& out, const Limits& limits, std::string& er
             std::string inner;
             if (!r.bytes(raw, limits.max_list * (limits.max_integer_bytes + 2)) || !decode(raw, range, limits, inner)) return false;
         }
+        std::uint64_t key_count = 0;
+        if (!r.varint(key_count) || key_count > limits.max_list) return false;
+        b.new_keys.resize(key_count);
+        for (auto& key : b.new_keys) {
+            Bytes raw;
+            std::string inner;
+            if (!r.bytes(raw, limits.max_key_bytes + 1024) || !decode(raw, key, limits, inner)) return false;
+        }
         std::uint8_t has_prime = 0;
         if (!r.u8(has_prime) || has_prime > 1) return false;
-        b.prime_submission.reset();
+        b.prime.reset();
         if (has_prime) {
             Bytes raw;
             std::string inner;
-            PrimeSubmission prime;
-            if (!r.bytes(raw, limits.max_key_bytes + limits.max_signature_bytes + 1024) || !decode(raw, prime, limits, inner))
+            AcceptedPrime prime;
+            if (!r.bytes(raw, 4 * limits.max_integer_bytes + limits.max_text + 256) || !decode(raw, prime, limits, inner))
                 return false;
-            b.prime_submission = prime;
+            b.prime = prime;
         }
         return true;
     });
@@ -202,6 +246,22 @@ Hash256 submissionHash(const RangeSubmission& range) {
     Writer w;
     w.text("primechain-next/range-submission-id");
     const Bytes body = encode(range);
+    w.bytes(body);
+    return sha3(w.data());
+}
+
+bool decode(const Bytes& data, AcceptedPrime& out, const Limits& limits, std::string& error) {
+    return decodeStrict(data, out, limits, error, [&](Reader& r, AcceptedPrime& o) { return readAcceptedPrime(r, o, limits); });
+}
+
+bool decode(const Bytes& data, KeyRecord& out, const Limits& limits, std::string& error) {
+    return decodeStrict(data, out, limits, error, [&](Reader& r, KeyRecord& o) { return readKey(r, o, limits); });
+}
+
+Hash256 submissionHash(const PrimeSubmission& prime) {
+    Writer w;
+    w.text("primechain-next/prime-submission-id");
+    const Bytes body = encode(prime);
     w.bytes(body);
     return sha3(w.data());
 }
@@ -216,9 +276,10 @@ Hash256 blockHash(const BlockHeader& header) {
 
 std::vector<Bytes> rangesRootLeaves(const Block& block) {
     std::vector<Bytes> leaves;
-    leaves.reserve(block.ranges.size() + 1);
+    leaves.reserve(block.ranges.size() + block.new_keys.size() + 1);
     for (const auto& range : block.ranges) leaves.push_back(encode(range));
-    if (block.prime_submission) leaves.push_back(encode(*block.prime_submission));
+    for (const auto& key : block.new_keys) leaves.push_back(encode(key));
+    if (block.prime) leaves.push_back(encode(*block.prime));
     return leaves;
 }
 

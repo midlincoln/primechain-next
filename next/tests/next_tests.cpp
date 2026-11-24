@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <fstream>
+#include <map>
 #include <iostream>
 #include <stdexcept>
 
@@ -72,7 +73,7 @@ RangeSubmission makeRange(const Engine& e, const Miner& m, std::uint64_t start, 
     r.end = end;
     for (auto n = start; n <= end; ++n) r.divisors.emplace_back(smallestFactor(n));
     r.provider = m.address;
-    r.public_key = m.key.public_key;
+    if (!e.hasKey(m.address)) r.public_key = m.key.public_key;  // registered miners omit their key
     r.signature = sign(m, rangeSigningPayload(r));
     return r;
 }
@@ -84,7 +85,7 @@ PrimeSubmission makePrime(const Engine& e, const Miner& m, std::uint64_t p) {
     s.prime = p;
     s.witness = primitiveRoot(p);
     s.provider = m.address;
-    s.public_key = m.key.public_key;
+    if (!e.hasKey(m.address)) s.public_key = m.key.public_key;
     s.signature = sign(m, primeSigningPayload(s));
     return s;
 }
@@ -208,7 +209,36 @@ void engineTests() {
     mineTo(e, 13, miners);
     require(e.height() == 6 && e.chainFrontier() == 13, "blocks close at 5, 7, 11, 13 with height = prime index");
     for (std::size_t i = 2; i < e.blocks().size(); ++i)
-        require(!e.blocks()[i].ranges.empty() && e.blocks()[i].prime_submission, "every mined gap has a composite");
+        require(!e.blocks()[i].ranges.empty() && e.blocks()[i].prime, "every mined gap has a composite");
+
+    // Key registry: each miner's key is stored exactly once, in the block where it is first accepted.
+    std::map<Address, int> key_blocks;
+    for (const auto& b : e.blocks())
+        for (const auto& k : b.new_keys) ++key_blocks[k.address];
+    require(key_blocks.size() == miners.size(), "one key record per miner");
+    for (const auto& [address, n] : key_blocks) require(n == 1 && e.hasKey(address), "key stored once");
+    {
+        auto unknown = makeRange(e, W, e.acceptedFrontier().get_ui() + 1, e.acceptedFrontier().get_ui() + 1);
+        unknown.public_key.clear();
+        unknown.signature = sign(W, rangeSigningPayload(unknown));
+        require(!e.validateRange(unknown, error), "unknown miner without key rejected");
+    }
+    // The block stores the accepted prime and the hash of the full signed submission (signature included).
+    {
+        const Engine before = e;
+        Engine probe = before;
+        const auto a = probe.chainFrontier().get_ui() + 1, p = nextPrime(probe.chainFrontier().get_ui());
+        submit(probe, makeRange(probe, miners[0], a, p - 1));
+        while (probe.decideNextRange()) {}
+        const auto sub = makePrime(probe, miners[1], p);
+        const auto block = probe.closeBlock(sub, error);
+        require(block && block->prime && block->prime->submission_hash == submissionHash(sub) &&
+                    block->prime->provider == miners[1].address,
+                "accepted prime keeps the signed submission's hash");
+        auto altered = sub;
+        altered.signature[5] ^= 1;
+        require(submissionHash(altered) != submissionHash(sub), "submission hash covers the signature bytes");
+    }
 
     // Rejections.
     mineTo(e, 1009, miners);
@@ -325,7 +355,7 @@ void chainTest(std::uint64_t limit) {
     require(replayed && replayed->stateRoot() == e.stateRoot() && replayed->tip() == e.tip(), "replay identical: " + error);
     auto secs = [](auto a, auto b) { return std::chrono::duration<double>(b - a).count(); };
     std::cout << "chain: PASS\nblocks: " << e.height() << " (last prime " << e.chainFrontier().get_str() << ")\n"
-              << "encoded chain bytes: " << bytes << "\n"
+              << "encoded chain bytes: " << bytes << " (" << bytes / e.blocks().size() << " per block)\n"
               << "mine+sign+verify seconds: " << secs(t0, t1) << "\nreplay seconds: " << secs(t1, t2) << "\n"
               << "peak RSS KiB: " << peakRssKiB() << "\nchecks: " << checks << '\n';
 }

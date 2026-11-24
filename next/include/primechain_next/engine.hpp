@@ -48,6 +48,9 @@ public:
     bool validatePrime(const PrimeSubmission& prime, std::string& error) const;
     std::optional<Block> closeBlock(const PrimeSubmission& prime, std::string& error);
 
+    // Key registry: each miner key is stored once (in the block where it is first accepted).
+    bool hasKey(const Address& address) const { return keys_.count(address) != 0; }
+
     // Rebuild from genesis and verify every block again; the result must match bit for bit.
     static std::optional<Engine> replay(const Policy& policy, const std::vector<Block>& blocks, std::string& error);
 
@@ -60,13 +63,16 @@ private:
 
     bool checkSigned(const Bytes& payload, const Address& provider, const Bytes& key, const Bytes& signature,
                      std::string& error) const;
+    bool checkPrimeArithmetic(const Integer& prime, const Integer& witness, std::string& error) const;
+    bool registerKey(const Address& address, const Bytes& key, std::string& error);
+    std::optional<Block> closeAccepted(const AcceptedPrime& prime, std::string& error);
     bool checkDivisors(const Integer& start, const Integer& end, const std::vector<Integer>& divisors,
                        std::string& error) const;
     bool distinctPrimeFactors(const Integer& n, std::vector<Integer>& out, std::string& error) const;
     void applyAccepted(const AcceptedRange& range);
     void credit(const Address* address, const Integer& asset, const Amount& amount);
     void refreshAssetHash(const Integer& asset);
-    Block sealBlock(const Integer& prime, const std::optional<PrimeSubmission>& submission);
+    Block sealBlock(const Integer& prime, const std::optional<AcceptedPrime>& accepted);
 
     Policy policy_;
     std::uint64_t height_{0};
@@ -82,6 +88,8 @@ private:
     std::map<Integer, std::map<Address, Amount>> balances_;   // asset (prime) -> address -> amount
     std::map<Integer, Amount> pool_;                          // asset -> validator pool amount
     std::map<Integer, Hash256> asset_hashes_;
+    std::map<Address, Bytes> keys_;                           // address -> public key (registered once)
+    std::vector<KeyRecord> new_keys_;                         // registered since the last block
 };
 
 }  // namespace primechain::next
