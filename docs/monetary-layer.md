@@ -134,8 +134,10 @@ needed: same-label loans, and market rates per label.
 ## Cash (exploratory, 2026-11-23; still being thought through)
 
 **Decided (2026-11-25, replaces the class-group decision of 2026-11-24):** cash
-starts with **RSA blind signatures**, with a **post-quantum version planned
-later**. Everything else in Next stays post-quantum (ML-DSA).
+starts with **RSA blind signatures, in small tranches**, with a **post-quantum
+version planned later**: a STARK-based pool is the main candidate, and another
+scheme may replace it if it proves better. Everything else in Next stays
+post-quantum (ML-DSA).
 
 - At least 3072 bits, following a published standard (RFC 9474, blind RSA); one
   key per series and denomination, shared so that 2 of 3 validators must sign
@@ -147,11 +149,28 @@ later**. Everything else in Next stays post-quantum (ML-DSA).
   added as a new version; holders swap old notes for new ones until a deadline.
   This must happen before forgery is possible, since forged and honest RSA
   notes cannot be told apart.
-- Candidate: the class-group action on supersingular curves (Wombat, 2026, and
-  others; `experiments/cash_cycle/`). CSIDH-512 is too small for large amounts
-  against quantum attack; larger groups and SCALLOP-type groups are unread.
+- **Main post-quantum candidate: a note pool with STARK proofs** (the structure
+  of Zcash's Orchard pool, without its elliptic curves). Notes are leaves of an
+  on-chain hash tree. A spender proves "my note is in the tree" without showing
+  which one and publishes a nullifier, so it cannot be spent twice. Fixed
+  denominations, no hidden amounts. It rests on hash functions, and there is no
+  signing key to break or steal. Anyone's note enters the tree when its backing
+  enters the vault, so no validator signs notes.
+  - Not measured yet: proof size (estimate about 100 KB, 120–150 KB for ten notes
+    in one proof), proving time on a phone, verification time. Proofs could be
+    pruned from storage, as signatures are (D15).
+  - Counterfeiting through a flaw in the proof system would be invisible inside
+    the pool, so the cash limit applies to the pool too.
+  - To study first: Neptune Cash (described as private, post-quantum and built on
+    STARKs; not checked by us).
+- **Other candidates:** lattice blind signatures (Tanuki, Wombat), and the
+  class-group action on supersingular curves (`experiments/cash_cycle/`, p = 419).
+  The unknown class group of larger primes is no longer the obstacle (PEGASIS,
+  2025, evaluates the action without it). Open for the curves are speed, size
+  (about 70 KB per signature, our estimate), security proofs and maturity; no
+  threshold blind signature from isogenies was found.
 
-**Starting rules (proposed 2026-11-25; they replace the matching points below):**
+**Starting rules (2026-11-25; they replace the matching points below):**
 
 1. Notes are unlabeled and 100% backed by units in an on-chain vault.
 2. Any address may buy cash; a list of approved banks may be added later.
@@ -165,8 +184,17 @@ later**. Everything else in Next stays post-quantum (ML-DSA).
    bare serial can be stolen in transit).
 7. Every validator checks a cash limit (raised only by vote with notice, zero
    until cash opens) and never accepts more notes of a kind than were printed.
+   A kind is one series and denomination, with its own key.
+8. **Tranches:** each kind also has its own small limit, so one broken RSA key
+   puts only that kind at risk.
+9. **Freeze:** if a kind's key is suspected broken (for example, more notes
+   presented than printed), validators freeze the kind by vote. Its remaining
+   backing is then paid out pro rata to the notes presented by a deadline, at most
+   at par. Forged and honest notes cannot be told apart, so holders of that kind
+   share the loss; no other kind is touched.
 
-Open: swap fees (a unit fee breaks round notes into change), denominations,
+Open: the size of the tranches and of the total limit, how a freeze is triggered
+and voted, swap fees (a unit fee breaks round notes into change), denominations,
 backing of expired notes (treasury proposed), distributed key generation, and a
 ring founder exchanging barren primes before opening a ring (costs seigniorage
 only, so it is bounded by the limit).
@@ -182,8 +210,8 @@ The model follows real currency.
   (dividends) and to the protocol treasury (evidence bounties).
 - **Privacy, Chaum-style:** notes are signed **blind**, so neither the bank
   nor the validator can recognize a note later: RSA first, as in Chaum's 1982
-  ecash (see the decision above). The planned post-quantum series uses a secret
-  walk on supersingular curves and needs the certified class group of Z[√−p].
+  ecash (see the decision above). The planned post-quantum version hides the
+  payer through a proof instead of a blind signature, if the pool is chosen.
 - **Payments are off chain:** notes pass directly between wallets (QR code,
   message, NFC). On chain: issuance totals; withdrawals as account debits;
   and, at deposit or swap, the notes' serial numbers recorded as spent, so a
