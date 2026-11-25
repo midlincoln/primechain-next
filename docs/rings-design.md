@@ -249,7 +249,7 @@ i = 0.
   made arbitrarily long by multiplying it by units. The certificate therefore
   contains a unit ε ≠ ±1 (not necessarily fundamental), and a generator is valid
   only if neither multiplying nor dividing it by ε makes its encoding shorter.
-  Later degrees need their own rule.
+  Degree 3 and up: a length cap instead (proposed, `degree-sheets.md`).
 - **Exactly one row per rational prime q per ring,** so the same prime ideal
   cannot be recorded twice under different associates (π and π·ε).
 - Special treatment of units (for example recording fundamental units as
@@ -293,7 +293,8 @@ i = 0.
   PID. This does not change the order of work: quadratic rings (all Galois)
   come first.
 - **Each prime above q with f = 1 (norm exactly q) issues e/n of the entry's
-  full amount,** where n is the degree. Primes with f > 1 issue nothing and
+  full amount,** where n is the degree. With the ring budget this is e times the
+  ring's share of the budget, in every degree (`protocol-parameters.md`). Primes with f > 1 issue nothing and
   create no asset. In quadratic rings this is R8, R9 and R11 unchanged: split
   1/2 + 1/2, ramified 1, inert 0.
 - The average issuance per row is 1/n in every ring (a transitive group has

@@ -59,7 +59,7 @@ so far. The rest is designed or planned.
 | 16 | validator minimum reserve | to be set | A3-2 |
 | | **Ring rewards** | | |
 | 17 | **ring budget per main-chain prime (micro-units)** | 1,000,000 | R6 |
-| 18 | exponent e of the weight 1/j^e of ring j | 1/2 | R6 |
+| 18 | exponent x of the weight 1/j^x of ring j | 1/2 | R6 |
 | 19 | share paid for primes older than the ring | 10% | R6 |
 | 20 | ring miner's share (gets what 21 and 22 leave) | 50% | R11 |
 | 21 | upstream share (owners of the primes below) | 35% | R11 |
@@ -102,10 +102,13 @@ bounded in code (rule 5).
 Each main-chain prime q has a **ring budget** (parameter 17). The entry of ring
 j for q issues
 
-  budget · min(1, 2 w_j / (sum of w over the rings open when q was mined)), w_j = 1/j^e.
+  for each of its primes of norm q:  budget · e · w_j / W,
 
-About half of the open quadratic rings pay for a given prime, hence the factor 2; R12 adds
-its degree factor later. Over all rings, ring money stays close to main-chain money (1.0
+where e is the prime's ramification index, w_j = 1/j^x (parameter 18 is x), and W is the
+sum of w over the rings open when q was mined. An entry never issues more than the whole
+budget; if it would, its primes are reduced in proportion. **The same rule for every
+degree (agreed 2026-11-25):** by R12 a ring has on average one prime of norm q per row
+(counted with e), so rings of all degrees earn alike. Over all rings, ring money stays close to main-chain money (1.0
 to 1.1 times in simulation with all rows recorded). The result depends only on numbers
 on chain, not on who records first. Primes mined before the ring opened ("backlog") pay
 the reduced share; which rings count for them is open. The rule has a type and a version

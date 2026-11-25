@@ -15,24 +15,43 @@ after notice (R4, R2, D12). No smart-contract machine is needed.
 
 ## The sheet
 
-| # | Question | Degree 2 | Degree 3 |
-|---|---|---|---|
-| 1 | Unique name | D | open |
-| 2 | Proof of the full ring of integers | D fundamental, Z[ω] | open |
-| 3 | Discriminant, signature, Minkowski bound | √D/2 or (2/π)√abs(D) | 2√D/9 or 8√abs(D)/(9π) |
-| 4 | Eligibility | abs(D) ≤ F² | open |
-| 5 | Galois, automorphisms, subfields | Galois, none | usually not Galois, none |
-| 6 | Generator form and norm check | c₀ + c₁ω | three integers; open |
-| 7 | PID certificate | done | open |
-| 8 | Units and padding | one unit (D > 0) | one or two units; open |
-| 9 | Splitting types | 3 | 5: PQR; P·Q (norms q, q²); inert; P²Q; P³ |
-| 10 | Labels of primes above q | smaller, larger root | open |
-| 11 | Which primes pay | norm q, e/2 each | norm q, e/3 each |
-| 12 | Row, segment, generators per row | 1 | up to 3 |
-| 13 | Smaller rings below, awards | main chain only | main chain only |
-| 14 | Limits, checking cost, test vectors | done | open |
+Degree 2 is agreed (`extension-certificates.md`, `ring-records.md`). Degree 3 and the
+general sheet are **proposed**, tested in `experiments/degrees/` (Python, not engine code).
 
-Degree 2 is specified in `extension-certificates.md` and `ring-records.md`.
+| # | Question | Degree 2 | Degree 3 (proposed) | Any degree n (proposed) |
+|---|---|---|---|---|
+| 1 | Unique name | D | reduced binary cubic form (a, b, c, d) | hash of the certificate, with the duplicate test below |
+| 2 | Full ring of integers | D fundamental, Z[ω] | table of the form; Pohst–Zassenhaus test at each p with p² dividing D | multiplication table on a basis with e₀ = 1; the same test |
+| 2b | Is it a field? | D is not a square | the form has no rational root | irreducible characteristic polynomial of a generating element |
+| 3 | Signature, Minkowski bound | √D/2 or (2/π)√abs(D) | sign of D; 2√D/9 or 8√abs(D)/(9π) | signature of the trace form; (n!/nⁿ)(4/π)^r₂ √abs(D) |
+| 4 | Eligibility | abs(D) ≤ F² | abs(D) ≤ F² | abs(D) ≤ F² (the bound is then below F) |
+| 5 | Galois, subfields | Galois, none | usually not Galois, none | from the certificate, optional automorphisms |
+| 6 | Generator, norm | c₀ + c₁ω | three integers on 1, ω, θ; determinant | n integers; determinant |
+| 7 | PID certificate | generators up to the bound | a generator of every prime of norm ≤ bound | the same; the residue degrees give the number required |
+| 8 | Padding | not shortened by ε or 1/ε | length cap from the listed units | the same cap |
+| 9 | Splitting types | 3 | 5: PQR; P·Q (norms q, q²); inert; P²Q; P³ | by residue degrees |
+| 10 | Label of a prime of norm q | root r of f mod q | values of (1, ω, θ) mod q | values of the basis mod q |
+| 11 | What pays | norm q | norm q | norm q |
+| 12 | Generators per row | 1 | one per prime of norm q; with all three, two suffice | the same; with all n, n − 1 suffice |
+| 13 | Awards below | main chain only | main chain only | open PID subrings (R11); non-PID subrings are skipped |
+| 14 | Limits | 256 KB certificate | same | same; row checks grow with n |
+
+Notes:
+
+- **Labels are one rule for all degrees.** The map O → F_q with the ideal as kernel is
+  given by its values on the basis. For quadratics these are (1, r). It also works where a
+  polynomial mod q has too few roots. Assets (ring, q, i) are ordered by label.
+- **Cubic form:** ωθ = −ad, ω² = −ac + bω − aθ, θ² = −bd + dω − cθ. Reduced forms give
+  exactly PARI's 370 cubic fields with abs(D) ≤ 2209.
+- **2b and 3 are needed for safety:** residue degrees cannot prove that biquadratic rings are
+  fields, and a wrong signature gives too small a Minkowski bound, which could admit a
+  non-PID.
+- **Length cap:** every coefficient of a generator has at most bits(q)/n + the sum of the
+  lengths of the listed units (the longer of u and 1/u) + a margin. The unit rule of
+  degree 2 fails with two or more units. With no margin, 9 of 7,378 generators were above
+  it, by less than a bit. **Open:** a proof that a margin always suffices, and that the
+  listed units have full rank.
+- **Open:** how miners find generators, large discriminants, byte formats.
 
 ## Activation (proposed)
 
@@ -64,7 +83,8 @@ One checker for any degree: polynomial, integral basis with proof of maximality,
 generators by coefficients, norm by determinant. Then a degree could be enabled by a vote
 on limits, without new code. Special sheets (quadratic, cubic) stay shorter and faster.
 
-**Duplicates:** a new ring is compared only with open rings of the same degree and
+**Duplicates** (15 pairs of equal discriminant were told apart by a prime at most 43):
+a new ring is compared only with open rings of the same degree and
 discriminant. If some prime q below a limit splits differently in the two, they are
 different. Otherwise it is refused as a duplicate. No ring can enter twice. Up to degree 6
 different fields always differ at some prime (Perlis; to be checked); from degree 7 a few
