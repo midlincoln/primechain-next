@@ -1,7 +1,7 @@
 # Ring records (B1, draft for review)
 
-Status: **draft, 2026-11-25. Agreed: the opening rule (R5) and section 4 (R13).
-The rest is proposed.** Exact records for opening
+Status: **draft, 2026-11-25. Agreed: the five changes in section 6.
+Other details and all numbers marked * are proposed.** Exact records for opening
 and mining rings and for reading balances. Quadratic rings (certificate type 1)
 come first. Rules: `rings-design.md`. Numbers marked * are starting values.
 
@@ -107,7 +107,7 @@ is due from a new prime X can be computed and need not be written**:
 - issued(L) is the nominal amount, so rounding remainders and units held by nobody
   are never issued (R13).
 - **Genesis primes 2 and 3:** their share goes to the validators active at h, equally,
-  remainder to the first by payout address (proposed). This replaces the epoch distribution for
+  remainder to the first by payout address. This replaces the epoch distribution for
   these rows (R11, D17).
 - Main-chain primes keep explicit balances.
 
@@ -151,14 +151,15 @@ size of √q. Average about half. From 10⁵ on only R was computed (PARI, GRH-b
   10⁶ (estimate, 78,498 rows).
 - The index of rows must live on disk, not in memory: it grows with rings × rows.
 
-## 6. Changes to earlier decisions, if agreed
+## 6. Changes to earlier decisions
 
 1. R5/R2: a ring opens once no earlier commit is sealed (**agreed 2026-11-25**).
 2. R13: no payout records and no claim transactions; balances are computed
    (**agreed 2026-11-25**), with an optional awards file.
-3. R7: one signed message may carry several complete segments.
-4. Certificates: asset name (ring number, q, i); a unit for D > 0; a size limit.
-5. R11/D17: the validators' share from 2 and 3 goes to those active at h.
+3. R7: one signed message may carry up to 64* complete segments (**agreed**).
+4. Certificates: asset name (ring number, q, i); a unit for D > 0; at most 256 KB*
+   (**agreed**).
+5. R11/D17: the validators' share from 2 and 3 goes to those active at h (**agreed**).
 
 ## Open
 

@@ -102,6 +102,10 @@ frontier. The same rule applies to real and imaginary fields, with no π.
 
 ### R4. Generic, typed certificates and entries (2026-11-23)
 
+- **Certificate size: at most 256 KB** (agreed 2026-11-25, starting value). In real
+  rings the generators grow with the regulator, so from F ≈ 10⁴ this limits which
+  rings can open before |D| ≤ F² does (`ring-records.md`, section 5). A compact
+  form can come as a later certificate version.
 - The block and registry never look inside a certificate. A registry entry
   stores the certificate **type** (1 = quadratic; more types later), a
   **version**, and the certificate bytes. Validators dispatch on the type.
@@ -188,8 +192,11 @@ order, since each has norm q.
   segment ends, so miners have no choice there. Nobody can copy a segment and
   extend it. Identical submissions are a tie, settled by the round's proposer
   plus the vote (a copier with a faster path to the proposer can still win).
-  Later segments may be sent ahead as separate submissions. Segments are
-  decided in order.
+  Segments are decided in order.
+- **One signature may cover 1 to 64 consecutive segments** (agreed 2026-11-25; 64
+  is a starting value), since an ML-DSA signature (3.3 KB) is far larger than a
+  typical segment. Each segment still competes and is accepted on its own, like
+  the tail of a range (D4).
 - Each paid prime in a segment is rewarded separately (R11).
 - Example, Q(√17): [2 | 3], [5, 7, 11 | 13, 17, 19 | 23],
   [29, 31, 37, 41 | 43, 47, 53, 59 | 61].
@@ -209,9 +216,14 @@ When q splits into π and π̄, one entry is recorded with **one canonical
 generator**; the conjugate is derived from it. There is one miner reward per
 split q, since finding one generator finds both. As **assets**, π and π̄ are
 distinct (different prime ideals, possibly different futures in larger
-rings), and each receives half of the split's issuance. The canonical choice of which
-conjugate (for example b > 0 in Q(i), so 2 + i rather than 2 − i) is fixed
-together with canonical generators modulo units.
+rings), and each receives half of the split's issuance.
+
+**Asset name (agreed 2026-11-25): (ring number, q, i),** where i = 0 is the prime
+with the smaller root (or the ramified prime) and i = 1 the one with the larger.
+Main-chain prime p is (0, p, 0). Ring numbers follow the order of opening; signed
+messages use the ring ID (R4). The name denotes the ideal, so the choice of
+generator modulo units does not matter. The recorded generator is the one for
+i = 0.
 
 ### R9. Inert primes are marked but not paid (revised 2026-11-25)
 
@@ -230,6 +242,11 @@ together with canonical generators modulo units.
 
 - A recorded generator must have norm ±q for a prime q > 1. Units (norm ±1)
   can never pass.
+- **No padding (agreed 2026-11-25).** In real quadratic rings a generator could be
+  made arbitrarily long by multiplying it by units. The certificate therefore
+  contains a unit ε ≠ ±1 (not necessarily fundamental), and a generator is valid
+  only if neither multiplying nor dividing it by ε makes its encoding shorter.
+  Later degrees need their own rule.
 - **Exactly one row per rational prime q per ring,** so the same prime ideal
   cannot be recorded twice under different associates (π and π·ε).
 - Special treatment of units (for example recording fundamental units as
@@ -256,8 +273,9 @@ together with canonical generators modulo units.
   block before the entry is paid** (R13; spin-off model, `monetary-layer.md`).
 - **The genesis primes 2 and 3 have no holders (D7), so their 35% goes to the
   validators** (2026-11-25), at most twice per ring. It is shared equally
-  between the active validators' payout addresses with the epoch distribution
-  (D17), in units of the new ring primes. The miner's 50% and the founder's
+  between the payout addresses of the validators active at the main block that
+  pays the entry (remainder to the first by payout address; agreed 2026-11-25,
+  instead of the epoch distribution, D17), in units of the new ring primes. The miner's 50% and the founder's
   15% are unchanged. This is the only issuance validators receive.
 - Only split and ramified primes are paid (R9), so inert primes pay no
   one. A main-chain prime keeps earning for its **current holders**, not its
@@ -336,5 +354,4 @@ Replaces payout records and claims (agreed earlier the same day).
 
 - Reveal window length; commit fee amount and refund rule.
 - Ring-asset issuance per field-chain entry.
-- Canonical field identity for degree ≥ 3; canonical generators modulo units
-  (needed before ring assets exist).
+- Canonical field identity for degree ≥ 3, and names of ring primes there.

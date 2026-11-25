@@ -62,8 +62,9 @@ The polynomial must be ω's: with x² − D, the prime 2 would be misclassified
 in rings like Q(√17) (x² − 17 ≡ (x − 1)² mod 2 looks ramified, but
 f = x² − x − 4 ≡ x(x + 1) shows that 2 splits).
 
-**Assets (spin-off model):** the asset ID of a ring prime is
-hash(ring ID, q, r). The two conjugates are separate assets, each receiving
+**Assets (spin-off model):** a ring prime is named (ring number, q, i), with
+i = 0 for the smaller root and 1 for the larger (R8, 2026-11-25; formerly
+hash(ring ID, q, r)). The two conjugates are separate assets, each receiving
 half of the split's issuance (R8); a ramified prime is one asset.
 
 ## 4. Eligibility (R3)
@@ -100,6 +101,10 @@ lists, for **every prime q ≤ M_K that is not inert**, in increasing order:
    generator must satisfy **N = ±q** (positive for D < 0) and
    **c₀ + c₁r ≡ 0 (mod q)**, so it generates exactly the labeled prime.
 4. Nothing is missing and nothing is extra.
+
+**To be added with B3 (agreed 2026-11-25):** for D > 0 a unit ε ≠ ±1, used to
+reject padded generators (R10), and a size limit of 256 KB (R4). The current
+verifier and vectors predate both.
 
 No certificate exists for a non-PID. Example: Q(√−5) (D = −20,
 M_K ≈ 2.85). The prime 2 ramifies, and no element has norm 2.
