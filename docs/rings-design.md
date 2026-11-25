@@ -237,13 +237,15 @@ together with canonical generators modulo units.
 - **Split and ramified entries issue the same total.** For split q, half of
   every share is paid in x and half in y (R8); for ramified q, all of it is
   paid in the single prime x.
-- **Upstream** goes to the ancestors along the DAG: for quadratic and cubic
-  rings that is the **holders of p's micro-units, pro rata, at the moment the
-  entry is finalized** (spin-off model, `monetary-layer.md`). For nested rings (degree ≥ 4)
-  it is divided along the path, halving per step, with the remainder to the
-  main-chain prime's current holders (to be confirmed: halving or equal
-  split). The total
-  stays 35% at any depth.
+- **Upstream** goes to the holders of the primes below, by one rule at every
+  height (agreed 2026-11-25): **of whatever reaches a prime, its holders receive
+  half (rounded down) and the rest is passed in equal parts to the primes
+  directly below; the main-chain prime keeps all that reaches it.** So for
+  quadratic and cubic rings everything goes to the main-chain prime's holders.
+  The total stays 35% at any depth. Rings that are not PIDs, not open, or have
+  not reached q are skipped. A non-Galois ring that sits in a larger ring in
+  several ways counts once per embedding. Holders are those **at the moment the
+  entry is paid** (R1, R13; spin-off model, `monetary-layer.md`).
 - **The genesis primes 2 and 3 have no holders (D7), so their 35% goes to the
   validators** (2026-11-25), at most twice per ring. It is shared equally
   between the active validators' payout addresses with the epoch distribution
@@ -285,22 +287,20 @@ together with canonical generators modulo units.
 - **Anyone may trigger a claim for any address**, paying the fee. The payout
   can only go to the rightful address, so wallets or a distribution script may
   do it, and nothing is lost if a script stops.
+- **All owned units earn from higher rings, claimed or not.** Each ring prime is
+  issued once, so what an owner is due can be looked up. Counting claimed units
+  only was rejected: it favors ring miners and founders (see
+  `experiments/nested_rings/`).
+- A balance counts as it stood at the end of the block before h; payouts apply
+  before the block's transfers. A claim is applied automatically before its
+  owner spends that prime. Units held by no one (fee pool) earn nothing.
+- Amounts are rounded down per holder, and **the remainder is never issued**.
 
 ## Proposed (awaiting agreement)
 
-- **Claim details (proposed 2026-11-25):** payouts apply before the block's
-  transfers; units held by no one (fee pool) earn nothing; only claimed units
-  earn from higher rings, the level's share being divided among them; holder
-  amounts are rounded down and the remainder is never issued.
 - **Merkle `state_root` (proposed 2026-11-25):** today it is one flat hash over
   every asset, key and nonce. A tree rehashes only what changed and allows
   short proofs.
-- **Passing the 35% down a tower (proposed 2026-11-25):** of whatever reaches a
-  prime, its holders receive half (rounded down) and the rest is passed in
-  equal parts to the primes directly below; the main-chain prime keeps all
-  that reaches it. Rings that are not PIDs, not open, or have not reached q
-  are skipped. A non-Galois ring that sits in a larger ring in several ways
-  counts once per embedding.
 - **Segments above degree 2 (proposed 2026-11-25):** a segment ends at an
   unpaid row rather than an inert one (some rings have no inert primes); the
   32 and 1,024 limits stay. The same thing in quadratic rings.
