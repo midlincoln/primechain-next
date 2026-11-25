@@ -11,7 +11,8 @@ Status: in progress. Decisions are recorded as they are agreed. Plan:
   prime in order, how that prime factors in the ring (with generators).
 - **Discoverer:** earns a share of the ring's own issuance. The main chain's
   reward split (D8) is unchanged.
-- **Ring assets:** transferred inside their own field chain (D6).
+- **Ring assets:** held and transferred on the main ledger, like main-chain
+  primes (R1).
 
 ### Protocol messages (versioned, D12)
 
@@ -35,15 +36,23 @@ Status: in progress. Decisions are recorded as they are agreed. Plan:
 - Each ring has its own chain. A ring block contains: ring ID, previous ring
   block hash, `depends_on` (the hash of the main-chain block that finalized
   the prime(s) it records), the entries, and the validators' signatures.
-- Ring blocks are **final on their own**, by validator decisions batched
-  across rings and independent of main-chain blocks. Links point from rings
-  to the main chain, never the other way, and a ring entry never changes any
-  main-chain record.
-- **Snapshot (kept):** each main-chain header's `extension_root` is a Merkle
-  root over pairs (ring ID → hash of that ring's latest finalized block),
-  including the registry. It is not needed for correctness; it lets a light
-  client prove any ring fact from one main header plus short proof paths, and
-  it gives one ordered anchor for all rings at each prime.
+- **One consensus sequence, two files (agreed 2026-11-25,** replacing "final on
+  their own"**).** Ring batches (complete segments from any rings) are a third
+  kind of decision, in the same sequence as ranges and primes (A3-1). Main
+  blocks stay in the main file; ring blocks go to one append-only rings file,
+  linked per ring, with an index.
+- **Links:** ring blocks point to the main blocks that finalized their primes,
+  and the next main header points back through `extension_root`. A ring entry
+  never changes a main-chain mathematical record; it only adds new money.
+- **`extension_root` is required for correctness** (revised 2026-11-25): a
+  Merkle root over pairs (ring ID → hash of that ring's latest decided block),
+  including the registry. It covers every ring batch decided since the last
+  prime. **Ring money counts from the main block that first includes it,** and
+  a wrong root makes that block invalid. It also lets a light client prove any
+  ring fact from one main header plus short proof paths.
+- **Protection of the main chain:** a prime can always close without a ring
+  batch; at most one ring batch between two main decisions, with a size limit;
+  validators can pause one ring or all rings (R2).
 - Example: q = 13 splits in Q(√17). The miner submits `FIELD_ENTRY` (generator
   (a + b√17)/2 of norm ±13). Validators check that 13 is final on the main
   chain with 13 ≤ F, that the rows of its segment are correct and complete (R7,
@@ -68,7 +77,8 @@ Reserve Banks do:
   credibility). N is a policy constant to be set.
 - **Exception:** an **emergency pause** of a single ring takes effect
   immediately, and only if its verifier is shown to be faulty. It is recorded
-  on chain.
+  on chain. An **emergency pause of all rings** works the same way
+  (2026-11-25), since rings share the consensus sequence and the ledger (R1).
 - Commitments finalized while gate 1 was open may still be revealed within
   the reveal window after it closes.
 - Gate states are part of the policy digest in every block header (D9).

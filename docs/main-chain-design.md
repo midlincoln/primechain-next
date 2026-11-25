@@ -220,8 +220,10 @@ request.
   and double, capped at 60 s (D11).
 - **Proposer:** validator (h + k + r) mod n in validator-set order. It is
   deterministic and independent of miners' submissions.
-- Ring blocks use their own instance sequence (ring epoch e, k) under the
-  same rules, and never block the main chain (R1).
+- **Ring batches are a third kind of decision in the same sequence** (revised
+  2026-11-25; formerly a sequence of their own). They are always optional, at
+  most one between two main decisions and limited in size, so a prime can
+  always close without one (R1).
 - Every vote signs the D10 domain: network ID, validator-set digest,
   (h, k, r), phase, and the value hash or nil.
 - Block decisions are **objective** (validity only). Subjective policy is
