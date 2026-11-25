@@ -90,7 +90,7 @@ bool expectTag(Reader& r, std::uint64_t tag, std::uint64_t& version) {
 bool readRange(Reader& r, RangeSubmission& out, const Limits& l, bool with_signature) {
     std::uint64_t count = 0;
     if (!expectTag(r, kRangeTag, out.version) || !r.text(out.network_id, l.max_text) || !r.hash(out.anchor) ||
-        !r.integer(out.start) || !r.integer(out.end) || !r.varint(count) || count > l.max_list)
+        !r.integer(out.start) || !r.integer(out.end) || !r.varint(count) || count > kMaxRangeComposites)
         return false;
     out.divisors.resize(count);
     for (auto& d : out.divisors) if (!r.integer(d)) return false;
@@ -108,7 +108,7 @@ bool readAccepted(Reader& r, AcceptedRange& out, const Limits& l) {
     std::uint64_t count = 0;
     if (!expectTag(r, kAcceptedTag, out.version) || !r.text(out.provider, l.max_text) ||
         !r.integer(out.accepted_start) || !r.integer(out.end) || !r.hash(out.submission_hash) ||
-        !r.varint(count) || count > l.max_list)
+        !r.varint(count) || count > kMaxRangeComposites)
         return false;
     out.divisors.resize(count);
     for (auto& d : out.divisors) if (!r.integer(d)) return false;

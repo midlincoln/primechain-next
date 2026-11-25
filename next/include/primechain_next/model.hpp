@@ -9,6 +9,7 @@
 namespace primechain::next {
 
 constexpr std::uint64_t kVersion1 = 1;
+constexpr std::uint64_t kMaxRangeComposites = 1024;  // D4.6: longer gaps take several ranges
 
 // Decode limits; every decoder is bounded.
 struct Limits {

@@ -143,6 +143,23 @@ void codecTests() {
     require(Amount(1000000).mul(1000000000000ull)->str() == "1000000000000000000", "Amount beyond 2^64 ok");
     require(Amount::max().str() == "340282366920938463463374607431768211455", "Amount max decimal");
 
+    {   // D4.6: range lists are bounded at 1,024 before they are decoded.
+        std::string error;
+        for (const std::size_t n : {std::size_t(1024), std::size_t(1025)}) {
+            RangeSubmission r;
+            r.network_id = "net";
+            r.start = 10; r.end = Integer(10) + n - 1;
+            r.divisors.assign(n, Integer(2));
+            r.provider = "p";
+            RangeSubmission back;
+            require(decode(encode(r), back, Limits{}, error) == (n == 1024), "range of " + std::to_string(n) + " composites");
+            AcceptedRange a;
+            a.provider = "p"; a.accepted_start = r.start; a.end = r.end; a.divisors = r.divisors;
+            AcceptedRange aback;
+            require(decode(encode(a), aback, Limits{}, error) == (n == 1024), "accepted range of " + std::to_string(n));
+        }
+    }
+
     // Integer and varint round trips at boundaries.
     const std::vector<Integer> values{0, 1, 127, 128, 255, 256, Integer("18446744073709551615"),
                                       Integer("18446744073709551616"), Integer("123456789012345678901234567890")};
@@ -263,6 +280,10 @@ void engineTests() {
         withPrime.divisors.emplace_back(7);  // 1013 is prime: no valid divisor exists
         withPrime.signature = sign(X, rangeSigningPayload(withPrime));
         require(!e.validateRange(withPrime, error), "range containing a prime rejected");
+        auto tooLong = makeRange(e, X, 1010, 1010 + 1024);  // 1,025 integers
+        require(!e.validateRange(tooLong, error) && error == "range is longer than 1,024 composites", "1,025 rejected: " + error);
+        auto longest = makeRange(e, X, 1010, 1010 + 1023);  // within the limit, but it contains primes
+        require(!e.validateRange(longest, error) && error != "range is longer than 1,024 composites", "1,024 passes the length limit");
         auto anchor = makeRange(e, X, 1010, 1012);
         anchor.anchor[0] ^= 1;
         anchor.signature = sign(X, rangeSigningPayload(anchor));

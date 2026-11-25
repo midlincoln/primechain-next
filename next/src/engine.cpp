@@ -189,6 +189,7 @@ bool Engine::checkDivisors(const Integer& start, const Integer& end, const std::
                            std::string& error) const {
     if (end < start) { error = "range end before start"; return false; }
     const Integer length = end - start + 1;
+    if (length > kMaxRangeComposites) { error = "range is longer than 1,024 composites"; return false; }
     if (!length.fits_ulong_p() || divisors.size() != length.get_ui()) {
         error = "one divisor per integer is required";
         return false;

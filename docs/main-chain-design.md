@@ -58,8 +58,8 @@ implicit (sieve) shortcut.
    64-byte divisors (~68 MB); with it a range stays under about 75 KB. Real
    gaps are far smaller: 219 composites below 10⁸, 539 at 738832927927 and
    1,549 (3.3 KB of smallest divisors) at 18361375334787046697. Limits on
-   pending ranges per miner and on total message size belong to A3.2. **Not
-   implemented yet** (the engine still has the 2²⁰ list limit).
+   pending ranges per miner and on total message size belong to A3.2. The
+   limit is implemented (`kMaxRangeComposites`).
 
 ### D5. The closing prime is its own decision (2026-11-23)
 
