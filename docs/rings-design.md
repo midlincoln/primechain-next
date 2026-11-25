@@ -25,7 +25,8 @@ Status: in progress. Decisions are recorded as they are agreed. Plan:
    2. claimed F ≤ current chain frontier;
    3. the eligibility rule holds for F;
    4. the certificate verifies;
-   5. no earlier commitment for the same D has been revealed (earliest wins).
+   5. the ring is not open yet. The earliest revealed commitment wins, and the
+      ring opens once no earlier commitment is still sealed (R5).
 3. `FIELD_ENTRY`: ring ID, main-chain prime q (the ring's next one, in order),
    decomposition type, generators, provider, signature.
 
@@ -68,8 +69,8 @@ Reserve Banks do:
 - **Gate 1, new rings (global):** open or closed. While closed, `RING_COMMIT`
   is rejected on arrival, and no fee is taken.
 - **Gate 2, mining per ring (amended 2026-11-23):** a ring accepted while
-  gate 1 is open is **immediately open for mining**, with no separate
-  validator approval. Validators can only **pause** mining on a ring: with
+  gate 1 is open is **immediately open for mining** once R5 settles whose it is,
+  with no separate validator approval. Validators can only **pause** mining on a ring: with
   notice like other gate changes, or immediately as an emergency pause (below).
   The discoverer share accrues while mining is not paused.
 - **Notice:** gate changes take effect only after a notice period of N blocks
@@ -129,8 +130,15 @@ frontier. The same rule applies to real and imaginary fields, with no π.
 - Applies to ring registrations (`RING_COMMIT` → `RING_REVEAL`). The reveal
   must come **within 10 blocks** after the commit is finalized, otherwise the
   commit expires.
+- **When a ring opens (agreed 2026-11-25).** The earliest commit wins, so a
+  revealed ring opens as soon as **no earlier commit is still sealed** (each has
+  been revealed or has expired). With none waiting, that is at once. Otherwise it
+  waits, at most until 10 blocks after its own commit. Only commits before it can
+  delay it; commits in one block count in their order in the block. If several
+  revealed commits name the same ring, the earliest gets it.
 - A small **refundable fee** accompanies the commit. It is returned with a
-  valid reveal and kept if the reveal is invalid or missing (anti-spam).
+  valid reveal (also when an earlier commit gets the ring) and kept if the reveal
+  is invalid or missing (anti-spam).
 - Field entries and main-chain ranges do not use commit–reveal: each prize is
   small, and copies are handled by arrival order (D4) and one entry per q per
   ring (R10). This can be strengthened later if copying is observed.
