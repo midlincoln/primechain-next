@@ -245,8 +245,41 @@ together with canonical generators modulo units.
   another ring.
 - The numbers are starting values, to be finalized with the economics.
 
+### R12. Galois and non-Galois rings; only degree-1 primes pay (2026-11-25)
+
+- Rings may be opened whether or not they are Galois. A non-Galois ring K and
+  its Galois closure are different rings, and each may be opened if it is a
+  PID. This does not change the order of work: quadratic rings (all Galois)
+  come first.
+- **Each prime above q with f = 1 (norm exactly q) issues e/n of the entry's
+  full amount,** where n is the degree. Primes with f > 1 issue nothing and
+  create no asset. In quadratic rings this is R8, R9 and R11 unchanged: split
+  1/2 + 1/2, ramified 1, inert 0.
+- The average issuance per row is 1/n in every ring (a transitive group has
+  one fixed point on average; Chebotarev). Measured for primes to 100,000 in
+  nine rings of degree 2 to 5, Galois or not: within 0.004 of 1/n.
+- A prime with f = 1 is never merely extended from a smaller ring, so no prime
+  ideal is issued twice, whatever order rings open in. Below it lie only
+  primes with f = 1.
+
 ## Proposed (awaiting agreement)
 
+- **Passing the 35% down a tower (proposed 2026-11-25):** of whatever reaches a
+  prime, its holders receive half (rounded down) and the rest is passed in
+  equal parts to the primes directly below; the main-chain prime keeps all
+  that reaches it. Rings that are not PIDs, not open, or have not reached q
+  are skipped. A non-Galois ring that sits in a larger ring in several ways
+  counts once per embedding.
+- **Segments above degree 2 (proposed 2026-11-25):** a segment ends at an
+  unpaid row rather than an inert one (some rings have no inert primes); the
+  32 and 1,024 limits stay. The same thing in quadratic rings.
+- **Lower rings first (proposed 2026-11-25):** a higher ring waits for its PID
+  subrings, so that lower owners receive their share.
+- **Rounding between holders (proposed 2026-11-25):** each holder rounded
+  down, remainder to the entry's miner.
+- **Automorphisms (proposed 2026-11-25):** no Galois flag. A certificate of
+  degree ≥ 3 may list automorphisms; the ring is shown as Galois when n
+  distinct ones verify. They shorten entries and never affect rewards.
 - **Ties (reviewed 2026-11-23):** there is no global arrival order and there
   are no timestamps. Main-chain range ties (same end) are settled by the
   round proposer's choice plus the vote (D4). Ring certificates go to the
