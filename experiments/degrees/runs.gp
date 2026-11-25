@@ -1,0 +1,10 @@
+default(parisizemax,200000000);
+runs(L,nm) = {my(mu=0,mp=0,ff=0,av=0.,n=poldegree(L[1]),mxd=0);
+ foreach(L,f, my(K=nfinit(f),u=0,p=0,first=0,s=0,t=0); forprime(q=2,20000, t++;
+   my(k=if(K.index%q,#polrootsmod(f,q),#[P|P<-idealprimedec(K,q),P.f==1]));
+   s+=k/n; if(k, if(!first,first=q); p++;mp=max(mp,p);u=0, u++;mu=max(mu,u);p=0));
+   ff=max(ff,first); av+=s/t; mxd=max(mxd,abs(s/t-1/n)));
+ printf("%s: %d fields, longest unpaid run %d, longest paid run %d, latest first paid prime %d, share per row %.4f (1/n %.4f, worst field off by %.4f)\n",nm,#L,mu,mp,ff,av/#L,1./n,1.*mxd)};
+sub(G,L)={my(t=0,b=0,w=List());foreach(L,f,foreach(nfsubfields(f,2),s,t++;my(d=nfdisc(s[1]),h=quadclassunit(d).no);if(h>1,b++;listput(w,[nfdisc(f),d,h]))));print("   ",G," quadratic subfields: ",t,", not PIDs: ",b," ",Vec(w)[1..min(#w,4)])};
+go(G)={my(L=[f|f<-nflist(G,[0,2209],-1),bnfinit(f).no==1]);if(#L,runs(L,G);if(G!="S4"&&G!="A4",sub(G,L)))};
+go("C4");go("V4");go("D4");go("A4");go("S4");
