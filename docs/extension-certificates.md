@@ -106,8 +106,9 @@ M_K ≈ 2.85). The prime 2 ramifies, and no element has norm 2.
 
 ## 6. Field-chain entries (R7–R10)
 
-Entries follow main-chain primes in increasing norm, up to the frontier.
-**Only split and ramified primes are recorded** (R9). An entry is
+Entries follow main-chain primes in order, up to the frontier, in segments
+(R7, revised 2026-11-25). **Inert primes are marked rows without a generator;
+only split and ramified primes are paid** (R9). An entry is
 
   (ring, p, type, r, c₀, c₁): for split p, the smaller root r and a
   generator of (p, ω − r); for ramified p, the double root.
@@ -115,8 +116,8 @@ Entries follow main-chain primes in increasing norm, up to the frontier.
 Validators check that p is a finalized main-chain prime; the type matches
 (D/p); f(r) ≡ 0 (mod p); r is the smaller root for split p, or the double
 root for ramified p; N = ±p; and c₀ + c₁r ≡ 0 (mod p). They also check that
-every prime skipped since the ring's previous entry is inert, and that there
-is at most one entry per p per ring (R10). One entry gives one proof and one
+every row of the segment has the right type, that no prime is missing, and
+that there is one row per p per ring (R10). One entry gives one proof and one
 miner reward, while issuing two assets for split p (R8, spin-offs).
 
 Why a generator proves primality: if π = αβ, then ±p = N(α)N(β), so one
@@ -131,7 +132,7 @@ ENTRY D=<D> P=<p> TYPE=<split|ramified|inert> [R=<r> GEN=<c0>:<c1>]
 ```
 
 `TYPE=inert` lines appear in the test vectors only, to test the skip rule;
-they are never recorded on chain. The canonical binary encoding,
+the v1 vectors predate marked inert rows (R9). The canonical binary encoding,
 commit–reveal wrapping (R5), the founder record (R6) and the on-chain ring
 blocks come with B3.
 

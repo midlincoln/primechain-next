@@ -46,7 +46,7 @@ Status: in progress. Decisions are recorded as they are agreed. Plan:
   it gives one ordered anchor for all rings at each prime.
 - Example: q = 13 splits in Q(√17). The miner submits `FIELD_ENTRY` (generator
   (a + b√17)/2 of norm ±13). Validators check that 13 is final on the main
-  chain with 13 ≤ F, that it is the ring's next split or ramified prime (R7,
+  chain with 13 ≤ F, that the rows of its segment are correct and complete (R7,
   R9), the norm equation, and uniqueness (R10). It becomes Q(√17)'s next
   block, and the next main header's snapshot points to it.
 
@@ -146,16 +146,39 @@ The actual schedule (budget per epoch, per cohort, decay per ring or across
 rings) is open and will be chosen by simulation (`monetary-layer.md`); the
 format covers all of the options.
 
-### R7. Ordering by norm (2026-11-23)
+### R7. Ordering by main-chain prime, in segments (revised 2026-11-25)
 
-- Within each ring, field-chain entries are ordered by **increasing norm** of
-  the prime ideals they record. The norm is unaffected by units and works the
-  same way for real and imaginary fields. For example, (3 + √17)/2 has |N| = 2,
-  and 2 + i has N = 5.
-- **Invariant:** no ring may record a norm greater than the main-chain
-  frontier F. F is always the maximum.
+Replaces ordering by norm. For quadratic rings the paid primes keep the same
+order, since each has norm q.
+
+- **One row per main-chain prime.** A ring's ledger goes through 2, 3, 5, 7, …
+  in order and gives every prime a row: split, ramified or inert. Each ring
+  has an explicit frontier ("complete up to q"), with **q ≤ F**. This replaces
+  the earlier invariant that no norm passes F (in higher degrees a row may
+  contain ring primes of norm q² and up).
+- **Segment:** any number of inert primes, then one or more paid (split or
+  ramified) primes, then the first inert prime after them, which closes the
+  segment. A segment also closes at its **32nd paid prime**, with no closing
+  inert prime; this covers long runs and rings that have no inert primes at
+  all, such as Q(√2, √3).
+- **One submission is exactly one complete segment.** Arithmetic fixes where a
+  segment ends, so miners have no choice there. Nobody can copy a segment and
+  extend it. Identical submissions are a tie, settled by the round's proposer
+  plus the vote (a copier with a faster path to the proposer can still win).
+  Later segments may be sent ahead as separate submissions. Segments are
+  decided in order.
+- Each paid prime in a segment is rewarded separately (R11).
+- Example, Q(√17): [2 | 3], [5, 7, 11 | 13, 17, 19 | 23],
+  [29, 31, 37, 41 | 43, 47, 53, 59 | 61].
+- **Why no holes:** every ring prime lies above exactly one main-chain prime,
+  so covering every q covers all ring primes; since the ring is a PID, every
+  other element is a product of them, up to units.
+- **Measured run lengths** (all 351 PIDs with |D| ≤ 2209, primes to 20,000):
+  longest inert run 20 (D = 2104), longest split/ramified run 23 (D = 721),
+  latest first paid prime 41 (D = −163). Nothing guarantees a bound, so the
+  rules do not assume one.
 - A global order across all trees is **not** part of consensus. It is a
-  derived index that anyone can compute, if one is ever needed.
+  derived index, as is order by norm.
 
 ### R8. Conjugates: one entry per split prime (2026-11-23)
 
@@ -167,19 +190,24 @@ rings), and each receives half of the split's issuance. The canonical choice of 
 conjugate (for example b > 0 in Q(i), so 2 + i rather than 2 − i) is fixed
 together with canonical generators modulo units.
 
-### R9. Only split and ramified primes are recorded (2026-11-23)
+### R9. Inert primes are marked but not paid (revised 2026-11-25)
 
-- Inert primes produce no new prime element and anyone can determine them
-  from D (one Kronecker symbol), so they are **not recorded and not paid**.
-  The main chain already paid for their primality.
-- Validators check that every prime skipped between two consecutive entries
-  is inert, so no split prime can be omitted silently.
+- The miner marks inert primes in the segment (about 2 bits each, no
+  generator). Without the marks, "inert" and "not mined yet" would look the
+  same after a ring's last entry.
+- They pay nothing and create no asset. The main chain already paid for their
+  primality.
+- **Validators verify every row and never search for generators.** Inertness:
+  one Kronecker symbol in quadratic rings; in degree n, irreducibility of the
+  ring's polynomial mod q. The finitely many primes dividing the polynomial's
+  index need a check covered by the ring's certificate (quadratics have
+  none).
 
 ### R10. Units and associates (2026-11-23)
 
 - A recorded generator must have norm ±q for a prime q > 1. Units (norm ±1)
   can never pass.
-- **At most one entry per rational prime q per ring,** so the same prime ideal
+- **Exactly one row per rational prime q per ring,** so the same prime ideal
   cannot be recorded twice under different associates (π and π·ε).
 - Special treatment of units (for example recording fundamental units as
   evidence) would be a new versioned entry type.
@@ -201,7 +229,7 @@ together with canonical generators modulo units.
   main-chain prime's current holders (to be confirmed: halving or equal
   split). The total
   stays 35% at any depth.
-- Only split and ramified primes have entries (R9), so inert primes pay no
+- Only split and ramified primes are paid (R9), so inert primes pay no
   one. A main-chain prime keeps earning for its **current holders**, not its
   original finder (confirmed 2026-11-24), each time it splits or ramifies in
   another ring.
