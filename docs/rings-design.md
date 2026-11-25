@@ -223,7 +223,7 @@ together with canonical generators modulo units.
   chain; one unit of account) is split (revised 2026-11-24) **50% to the
   entry's miner** (found the generator), **35% upstream**, **15% to the ring's
   discoverer** (R6). The miner's proportion matches the main-chain prime
-  finder's 50% (D8). There is no validator share (`monetary-layer.md`).
+  finder's 50% (D8). There is no general validator share (`monetary-layer.md`).
 - **Split and ramified entries issue the same total.** For split q, half of
   every share is paid in x and half in y (R8); for ramified q, all of it is
   paid in the single prime x.
@@ -234,6 +234,11 @@ together with canonical generators modulo units.
   main-chain prime's current holders (to be confirmed: halving or equal
   split). The total
   stays 35% at any depth.
+- **The genesis primes 2 and 3 have no holders (D7), so their 35% goes to the
+  validators** (2026-11-25), at most twice per ring. It is shared equally
+  between the active validators' payout addresses with the epoch distribution
+  (D17), in units of the new ring primes. The miner's 50% and the founder's
+  15% are unchanged. This is the only issuance validators receive.
 - Only split and ramified primes are paid (R9), so inert primes pay no
   one. A main-chain prime keeps earning for its **current holders**, not its
   original finder (confirmed 2026-11-24), each time it splits or ramifies in

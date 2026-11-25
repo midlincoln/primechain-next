@@ -82,7 +82,8 @@ separately. Its acceptance closes the block, and the chain frontier becomes p.
 
 ### D7. Genesis seeds 2 and 3 (2026-11-23)
 
-- Genesis contains the primes 2 and 3 as a seed, with no mining rewards.
+- Genesis contains the primes 2 and 3 as a seed, with no mining rewards and no
+  units. Their upstream share in rings goes to the validators (R11).
 - The first mined block closes at 5, with gap {4}. From then on every gap
   contains at least one composite, so the reward rule has no special case
   (in v1, the block closing at 3 had an empty interval).

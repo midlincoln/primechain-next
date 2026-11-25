@@ -269,6 +269,11 @@ earn only when the economy grows:
 3. **Fees:** transactions, ring registrations, cash services.
 4. **Spin-offs on paid-in capital** (membership stock is held as primes).
 
+5. **The 35% upstream share of 2 and 3 in each ring** (R11, 2026-11-25), since
+   the genesis primes have no holders. At most two entries per ring; the only
+   issuance validators receive. It ties validator income to ring openings,
+   which validators control through κ; to be watched when κ is set.
+
 At launch validator income is close to zero (the founder runs all validators).
 
 **Decided (2026-11-24): the freed 10% goes back to the miners.** The main chain
