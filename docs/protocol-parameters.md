@@ -29,38 +29,77 @@ issued can be changed by a vote.
 
 ## Table (starting values)
 
-| Parameter | Start | Where |
-|---|---|---|
-| main reward per prime | 1,000,000 | D8 |
-| finder / composites | 50 / 50% | D8 |
-| composites per range | 1,024 | D4 |
-| transfer fee minimum; outputs per transfer | 1; 1,000 | D16 |
-| epoch length (fee pool payout) | 100 blocks | D17 |
-| governance notice | 100 blocks | A3-2 |
-| proposer skip after | 3 missed turns | A3-3 |
-| round timeout base / cap | 1 s / 60 s | D11 |
-| certificate checkpoint / window | 1,000 / 1,000 blocks | A3-3 |
-| ring miner / owners / founder | 50 / 35 / 15% | R11 |
-| kept by holders on the way down | 1/2 | R11 |
-| **ring budget per main-chain prime** | 1,000,000 (as the main reward) | below |
-| weight of ring j in the budget | 1/sqrt(j) | below |
-| share paid for primes older than the ring | 10% | below |
-| new rings per epoch (kappa), gate 1 | open, no limit yet | R2 |
-| reveal window | 10 blocks | R5 |
-| ring deposit | to be set | R5 |
-| eligibility bound | abs(D) <= F^2 | R3 |
-| certificate size | 256 KB | R4 |
-| paid rows / inert rows per segment | 32 / 1,024 | R7 |
-| segments per signature | 64 | R7 |
-| ring batch size | 256 KB | ring-records |
-| cash: total limit, limit per kind, key size | 0, 0, 3072 bits | monetary-layer |
+"Engine" means the value exists in the engine today; only the minimum fee can be voted on
+so far. The rest is designed or planned.
+
+| # | Parameter | Start | Where |
+|---|---|---|---|
+| | **Main chain** | | |
+| 1 | main reward per prime (micro-units) | 1,000,000 | D8, engine |
+| 2 | prime finder's share (composites get the rest) | 50% | D8, engine |
+| 3 | composites per range, at most | 1,024 | D4, engine |
+| 4 | main-chain integer size, at most | 64 bytes | D14, engine |
+| | **Transfers** | | |
+| 5 | minimum fee (micro-units) | 1 | D16, engine, votable |
+| 6 | outputs per transfer, at most | 1,000 | D16, engine |
+| 7 | inputs per transfer, at most | to be set | A3.2 |
+| 8 | transfers per block and waiting, at most | to be set | A3.2 |
+| 9 | fee by size | to be set | A3.2 |
+| | **Validators and consensus** | | |
+| 10 | epoch length (fee pool payout) | 100 blocks | D17, engine |
+| 11 | notice for voted changes | 100 blocks | A3-2, engine |
+| 12 | proposer skipped after missed turns | 3 | A3-3, engine |
+| 13 | round timeout, base and cap | 1 s, 60 s | D11, engine |
+| 14 | certificate checkpoint every / recent window | 1,000 / 1,000 blocks | A3-3, engine |
+| 15 | message size and pending submissions per miner | to be set | A3.2 |
+| 16 | validator minimum reserve | to be set | A3-2 |
+| | **Ring rewards** | | |
+| 17 | **ring budget per main-chain prime (micro-units)** | 1,000,000 | R6 |
+| 18 | exponent e of the weight 1/j^e of ring j | 1/2 | R6 |
+| 19 | share paid for primes older than the ring | 10% | R6 |
+| 20 | ring miner's share (gets what 21 and 22 leave) | 50% | R11 |
+| 21 | upstream share (owners of the primes below) | 35% | R11 |
+| 22 | founder's share | 15% | R11 |
+| 23 | kept by holders on the way down | 1/2 | R11 |
+| | **Opening rings** | | |
+| 24 | gate 1 (new rings) | open | R2 |
+| 25 | new rings per epoch, at most (kappa) | to be set | R2 |
+| 26 | reveal window | 10 blocks | R5 |
+| 27 | ring deposit | to be set | R5 |
+| 28 | eligibility: abs(D) <= F^t | t = 2 | R3 |
+| 29 | certificate size, at most | 256 KB | R4 |
+| 30 | certificate integer size, at most | 4,096 bytes | D14, engine |
+| | **Mining rings** | | |
+| 31 | paid rows per segment, at most | 32 | R7 |
+| 32 | inert rows before a paid one, at most | 1,024 | R7 |
+| 33 | segments per signature, at most | 64 | R7 |
+| 34 | mining message size, at most | 256 KB | ring-records |
+| 35 | ring batch size, at most | 256 KB | ring-records |
+| 36 | pause of one ring / all rings | off | R2 |
+| | **Cash (closed at launch)** | | |
+| 37 | total cash limit | 0 | monetary-layer |
+| 38 | limit per kind (tranche) | 0 | monetary-layer |
+| 39 | denominations | to be set | monetary-layer |
+| 40 | RSA key size, at least | 3,072 bits | monetary-layer |
+| 41 | note exchange deadline; freeze deadline | to be set | monetary-layer |
+| 42 | swap fee | to be set | monetary-layer |
+| | **Later (banks, loans)** | | |
+| 43 | membership stock, part paid in, dividend cap, loan limits | 6%, half, to be set | monetary-layer |
+
+The ring budget (17) is a number of its own: it starts equal to the main reward (1) and
+does not follow it when either is changed. Its value at the main block in which the row's
+main-chain prime was mined counts. A value of 0 stops ring issuance for new primes.
+
+Local settings (snapshot interval, resend times, awards file, sync sizes) do not affect
+what is valid, so each node chooses its own. A lower limit on sizes or key strength is
+bounded in code (rule 5).
 
 ## Ring issuance (starting rule A3, 2026-11-25)
 
-Each main-chain prime q has a **ring budget equal to its main reward**. The entry of ring
+Each main-chain prime q has a **ring budget** (parameter 17). The entry of ring
 j for q issues
 
-  budget · min(1, 2 w_j / (sum of w over the rings open when q was mined)), w_j = 1/sqrt(j).
+  budget · min(1, 2 w_j / (sum of w over the rings open when q was mined)), w_j = 1/j^e.
 
 About half of the open quadratic rings pay for a given prime, hence the factor 2; R12 adds
 its degree factor later. Over all rings, ring money stays close to main-chain money (1.0
