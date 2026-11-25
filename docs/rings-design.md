@@ -117,6 +117,8 @@ frontier. The same rule applies to real and imaginary fields, with no π.
   (a, b) / 2.
 - **Field-chain entries** list the prime ideals above q as (e, f, generator)
   items, with the check Σ e·f = n.
+- **Each degree has a sheet** answering the same questions (2026-11-25,
+  `degree-sheets.md`).
 - **Adding a certificate type** (for example cubic) is a protocol upgrade
   agreed by the validator community. It activates with notice at a block
   boundary (D12 versioning, R2 notice) and changes no existing chain.
