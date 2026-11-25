@@ -165,3 +165,8 @@ Clean under AddressSanitizer and UndefinedBehaviorSanitizer.
 - **B3:** `extension_root` (currently zero) and the rings layer.
 - An incremental state Merkle tree. `state_root` currently hashes one cached
   digest per asset.
+
+## License
+
+The code in this directory (`next/`) is released under the MIT license
+(`LICENSE`). Contributions to it are accepted under the same license.
