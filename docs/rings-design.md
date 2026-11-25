@@ -164,9 +164,10 @@ Each ring's registry record carries:
   change the policy for future rings only, with notice. Existing ring bonds
   keep their terms.
 
-The actual schedule (budget per epoch, per cohort, decay per ring or across
-rings) is open and will be chosen by simulation (`monetary-layer.md`); the
-format covers all of the options.
+The starting schedule is a budget per main-chain prime shared by the open rings
+(2026-11-25, `protocol-parameters.md`), chosen after a simulation of options A–D
+(`monetary-layer.md`). Its numbers are protocol parameters (D20); the format
+covers the other options.
 
 ### R7. Ordering by main-chain prime, in segments (revised 2026-11-25)
 
@@ -353,5 +354,6 @@ Replaces payout records and claims (agreed earlier the same day).
 ## Open
 
 - Reveal window length; commit fee amount and refund rule.
-- Ring-asset issuance per field-chain entry.
+- Ring issuance: starting rule and parameters in `protocol-parameters.md`; the
+  backlog rule is open.
 - Canonical field identity for degree ≥ 3, and names of ring primes there.

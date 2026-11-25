@@ -413,10 +413,12 @@ These can be combined (for example C plus an A-style ceiling). Goals:
 3. workable lending (predictable bond income);
 4. balance between main mining, ring discovery and ring mining.
 
-**Method:** a small, exploratory economic simulation of options A–D under
-scenarios (slow or fast mining, few or many rings, varying κ), measuring
-inflation paths, miners' income, and bond values and yields. It will be
-built only after the founder's go-ahead.
+**Simulated and chosen (2026-11-25):** a budget per main-chain prime, equal to its main
+reward and shared by the open rings, older ones getting more (a variant of A with D).
+Decay per ring (C) does not bound the total: 351 rings issue about 64 times the main
+chain. A bounded total means that new rings dilute old ones (A) or earn little (D), so
+the limit on new rings (κ) is needed with any rule. Numbers are parameters (D20,
+`protocol-parameters.md`).
 
 **Decided (2026-11-23): one unit of account.** All micro-units are equal,
 whether issued by the main chain or by any ring. Ring issuance is the same

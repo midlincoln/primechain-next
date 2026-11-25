@@ -405,6 +405,14 @@ A3-1 to A3-3 and the model test. Choices the design left open, for review:
 One integer type is used across the main chain, rings, curves and landmarks.
 Money is not 64-bit, because total supply could pass 2⁶⁴ micro-units.
 
+### D20. Every number is a protocol parameter (2026-11-25)
+
+Numbers are not settled in the design. Each is a parameter with a starting value, in one
+versioned table that is part of the state and the policy digest, changed by vote with
+notice (A3-2) and never retroactively. Rules, bounds and the table:
+`protocol-parameters.md`. The engine's `Policy` holds some of them today, and only the
+minimum fee can be voted on; the rest follows with B3 and A3.2.
+
 ### Fixed by earlier work
 
 - **Consensus:** two-phase (prevote/precommit) rounds, lock on a quorum of
