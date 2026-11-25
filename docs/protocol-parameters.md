@@ -17,9 +17,11 @@ goes into the rules; starting values only need to be reasonable and safe.
 4. **Ring terms are fixed when the ring opens** (R6): founder share and schedule
    parameters. A vote changes them for later rings only. The budget and the number of
    open rings are common to all rings and can change.
-5. **Hard bounds in code** for every parameter (proposed, values to be set), so that a
-   vote cannot, for example, set a message limit to 0 or a reward to 2^100. Changing a
-   bound is a protocol upgrade.
+5. **Every parameter needs protocol approval to change** (agreed 2026-11-25): the same
+   vote with notice for all of them, with no exception for small ones.
+   **Ranges:** a model built later will suggest a comfortable range for each parameter.
+   Hard bounds in code (proposed) will come from it, so that a vote cannot set a message
+   limit to 0 or a reward to 2^100. Changing a bound is a protocol upgrade.
 6. Shares of one reward always sum to 100%, so the last one is not a parameter.
 
 ## Not parameters
