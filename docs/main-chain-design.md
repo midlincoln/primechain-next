@@ -51,6 +51,15 @@ implicit (sieve) shortcut.
 5. **The losing miner gets nothing** for the overlapping part. Example: X
    submits 1010–1011 and Y submits 1010–1012; Y is accepted, and X receives no
    credit for 1010–1011.
+6. **At most 1,024 composites per range** (2026-11-25). Partial ranges are
+   allowed, so a longer gap is filled by several ranges and nothing stalls.
+   The limit is checked before the divisor list is decoded, and before any
+   signature. Reason: without it a message could carry about a million
+   64-byte divisors (~68 MB); with it a range stays under about 75 KB. Real
+   gaps are far smaller: 219 composites below 10⁸, 539 at 738832927927 and
+   1,549 (3.3 KB of smallest divisors) at 18361375334787046697. Limits on
+   pending ranges per miner and on total message size belong to A3.2. **Not
+   implemented yet** (the engine still has the 2²⁰ list limit).
 
 ### D5. The closing prime is its own decision (2026-11-23)
 

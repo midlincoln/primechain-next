@@ -161,6 +161,11 @@ order, since each has norm q.
   segment. A segment also closes at its **32nd paid prime**, with no closing
   inert prime; this covers long runs and rings that have no inert primes at
   all, such as Q(√2, √3).
+- **At most 1,024 inert primes** before the first paid prime (2026-11-25). At
+  1,024 with no paid prime, the segment closes as an **empty segment**, which
+  pays nothing. A miner who wants the next paid primes submits it along with
+  the following segment, so the ring is not stalled. It bounds message size;
+  the longest run measured is 20.
 - **One submission is exactly one complete segment.** Arithmetic fixes where a
   segment ends, so miners have no choice there. Nobody can copy a segment and
   extend it. Identical submissions are a tie, settled by the round's proposer
