@@ -96,6 +96,8 @@ print("generators checked",len(raw),"bad",bad,"one generator gave all n primes:"
 OPEN={1:3,2:46,3:46341}; FOUND={1:'A',2:'B',3:'C'}; POW={'A':40,'B':30,'C':20,'D':10}; N=list(POW)
 M=10**6
 class Sim:
+    hook=None      # called after each block's payouts and transfers
+    alias={}       # payouts earned by one address are credited to another (cash vault)
     def __init__(s,seed,transfers=False,rule='own',cad=None,lazy=False,perblock=4):
         s.R=random.Random(seed);s.tr=transfers;s.rule=rule;s.cad=cad;s.lazy=lazy;s.pb=perblock
         s.bal=defaultdict(lambda:defaultdict(int));s.hist=defaultdict(list)  # (asset,addr)->[(block,bal)]
@@ -118,6 +120,7 @@ class Sim:
         front={1:0,2:0,3:0};fr=dict(front)  # index into PR of next row
         for b in range(1,len(PR)-1):
             p=PR[b+1];prev=PR[b]  # prev is final before this block
+            s.b=b;s.front=front
             # ---- ring batch decided before p closes: rows q<=prev
             events=[];start=dict(front)
             for k in (1,2,3):
@@ -153,7 +156,7 @@ class Sim:
                     for a,amt in rec:
                         tot=0
                         for who,v in bal[a].items():
-                            x=amt*v//s.sup[a];tot+=x;todo.append((X,who,x,'from level %d to level %d'%(X[0],a[0])))
+                            x=amt*v//s.sup[a];tot+=x;todo.append((X,s.alias.get(who,who),x,'from level %d to level %d'%(X[0],a[0])))
                         s.dust+=amt-tot
                 for X,who,x,t in todo:
                     if x:bal[X][who]+=x;s.src[who][t]+=x
@@ -180,6 +183,7 @@ class Sim:
                 bal[A][who]+=x;s.src[who]['main chain']+=x
                 if s.lazy:setx(A,who,x,b)
             # transfers (after payouts)
+            if s.hook:s.hook(s,b,prev)
             if s.tr:
                 for _ in range(6):
                     a=s.R.choice(s.keys) if hasattr(s,'keys') and s.R.random()<.7 and s.keys else (0,s.R.choice(PR[2:b+2]))
@@ -209,6 +213,7 @@ class Sim:
                     s.pend=keep
         s.front=front;s.setx=setx
         return s
+    def paidrow(s,k,q):return bisect.bisect_left(PR,q)<s.front[k]
     def expl(s,a,who,b):
         h=s.hist.get((a,who))
         if not h:return 0
