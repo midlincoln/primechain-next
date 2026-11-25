@@ -133,11 +133,43 @@ needed: same-label loans, and market rates per label.
 
 ## Cash (exploratory, 2026-11-23; still being thought through)
 
-**Decided (2026-11-24):** cash cryptography uses the class-group action on
-supersingular curves (isogeny-based blind signatures in the CSI-FiSh
-family), built strictly from published constructions. Cash is printed only
-once the evidence layer has certified the class group it needs. Other cash
-details stay open.
+**Decided (2026-11-25, replaces the class-group decision of 2026-11-24):** cash
+starts with **RSA blind signatures**, with a **post-quantum version planned
+later**. Everything else in Next stays post-quantum (ML-DSA).
+
+- At least 3072 bits, following a published standard (RFC 9474, blind RSA); one
+  key per series and denomination, shared so that 2 of 3 validators must sign
+  (published threshold RSA). Key generation without a trusted dealer is open.
+- **Cash is not post-quantum until then, and we say so.** A large quantum
+  computer could forge notes; the loss is bounded by the cash outstanding
+  (limit below). Payer privacy does not depend on RSA: the blinding is perfect.
+- **Migration:** every note has a version and series. A post-quantum series is
+  added as a new version; holders swap old notes for new ones until a deadline.
+  This must happen before forgery is possible, since forged and honest RSA
+  notes cannot be told apart.
+- Candidate: the class-group action on supersingular curves (Wombat, 2026, and
+  others; `experiments/cash_cycle/`). CSIDH-512 is too small for large amounts
+  against quantum attack; larger groups and SCALLOP-type groups are unread.
+
+**Starting rules (proposed 2026-11-25; they replace the matching points below):**
+
+1. Notes are unlabeled and 100% backed by units in an on-chain vault.
+2. Any address may buy cash; a list of approved banks may be added later.
+3. Par both ways. Vault income (spin-offs) is seigniorage; backing is untouchable.
+4. Anyone exchanges cash back directly on chain. Units with the fewest pending
+   payouts leave the vault first ("oldest first", random and pro rata let a
+   user trade barren primes for fertile ones at par).
+5. Resale on chain is one atomic transaction; off chain, the receiver should
+   swap at once.
+6. Each note has its own one-time key that authorizes its swap or deposit (a
+   bare serial can be stolen in transit).
+7. Every validator checks a cash limit (raised only by vote with notice, zero
+   until cash opens) and never accepts more notes of a kind than were printed.
+
+Open: swap fees (a unit fee breaks round notes into change), denominations,
+backing of expired notes (treasury proposed), distributed key generation, and a
+ring founder exchanging barren primes before opening a ring (costs seigniorage
+only, so it is bounded by the limit).
 
 The model follows real currency.
 
@@ -149,12 +181,9 @@ The model follows real currency.
   keeps earning spin-offs, and that seigniorage goes to the validator
   (dividends) and to the protocol treasury (evidence bounties).
 - **Privacy, Chaum-style:** notes are signed **blind**, so neither the bank
-  nor the validator can recognize a note later. The blind-signing key is a
-  secret walk on supersingular curves (an isogeny-based blind signature,
-  building on CSI-FiSh, which needs the certified class group of Z[√−p]).
-  **Cash can only be printed once the evidence layer has certified that
-  class group.** Chaum's original 1982 ecash used RSA blind signatures, which
-  are not post-quantum; the isogeny-based version is recent research.
+  nor the validator can recognize a note later: RSA first, as in Chaum's 1982
+  ecash (see the decision above). The planned post-quantum series uses a secret
+  walk on supersingular curves and needs the certified class group of Z[√−p].
 - **Payments are off chain:** notes pass directly between wallets (QR code,
   message, NFC). On chain: issuance totals; withdrawals as account debits;
   and, at deposit or swap, the notes' serial numbers recorded as spent, so a
