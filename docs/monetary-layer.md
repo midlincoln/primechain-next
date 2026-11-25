@@ -249,6 +249,10 @@ money; credit creation is a deliberate, later step.
 
 ### Infrastructure: the chain is the bank's back office
 
+**Superseded for now (2026-11-25):** banking is client side only. The protocol
+gets no bank transactions; cash is settled when we come to it. A ring is not a
+bank: it is a productive asset (ring bond). The text below is kept for later.
+
 Money rules (membership, deposits, fund shares, loans, reserves, dividends)
 run on chain, so depositors need not trust a bank's database. A bank's own
 software stays thin: the reference client's single executable gets a

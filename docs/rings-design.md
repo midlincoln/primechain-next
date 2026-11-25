@@ -262,8 +262,29 @@ together with canonical generators modulo units.
   ideal is issued twice, whatever order rings open in. Below it lie only
   primes with f = 1.
 
+### R13. Upstream payouts are claimed (2026-11-25)
+
+- When a ring entry pays, its miner and founder are credited at once. For the
+  upstream share the chain writes **one record per new prime and per level
+  below** (which prime earned how much of which new prime, at block h). No
+  owner lists are written: the ledger already fixes who owned what at h.
+- Owners receive their share by a **claim**, pro rata to the balance they held
+  at h. The protocol computes the amount and every validator checks it; a
+  marker per address and asset prevents double payment. No proof of past
+  ownership is needed, since the chain keeps the balance history.
+- **Anyone may trigger a claim for any address**, paying the fee. The payout
+  can only go to the rightful address, so wallets or a distribution script may
+  do it, and nothing is lost if a script stops.
+
 ## Proposed (awaiting agreement)
 
+- **Claim details (proposed 2026-11-25):** payouts apply before the block's
+  transfers; units held by no one (fee pool) earn nothing; only claimed units
+  earn from higher rings, the level's share being divided among them; holder
+  amounts are rounded down and the remainder is never issued.
+- **Merkle `state_root` (proposed 2026-11-25):** today it is one flat hash over
+  every asset, key and nonce. A tree rehashes only what changed and allows
+  short proofs.
 - **Passing the 35% down a tower (proposed 2026-11-25):** of whatever reaches a
   prime, its holders receive half (rounded down) and the rest is passed in
   equal parts to the primes directly below; the main-chain prime keeps all
@@ -275,8 +296,6 @@ together with canonical generators modulo units.
   32 and 1,024 limits stay. The same thing in quadratic rings.
 - **Lower rings first (proposed 2026-11-25):** a higher ring waits for its PID
   subrings, so that lower owners receive their share.
-- **Rounding between holders (proposed 2026-11-25):** each holder rounded
-  down, remainder to the entry's miner.
 - **Automorphisms (proposed 2026-11-25):** no Galois flag. A certificate of
   degree ≥ 3 may list automorphisms; the ring is shown as Galois when n
   distinct ones verify. They shorten entries and never affect rewards.
