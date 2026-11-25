@@ -12,6 +12,8 @@ goes into the rules; starting values only need to be reasonable and safe.
    height. Parameters are named in the vote, as old value → new value.
 3. **Never retroactive.** A row, reward or fee uses the values in force at its own main
    block h. The table's history is kept, because ring awards are computed later (R13).
+   Exception (proposed): the ring budget counts as of the block in which the row's
+   main-chain prime was mined, so that nobody gains by timing a row around a vote.
 4. **Ring terms are fixed when the ring opens** (R6): founder share and schedule
    parameters. A vote changes them for later rings only. The budget and the number of
    open rings are common to all rings and can change.
@@ -87,8 +89,7 @@ so far. The rest is designed or planned.
 | 43 | membership stock, part paid in, dividend cap, loan limits | 6%, half, to be set | monetary-layer |
 
 The ring budget (17) is a number of its own: it starts equal to the main reward (1) and
-does not follow it when either is changed. Its value at the main block in which the row's
-main-chain prime was mined counts. A value of 0 stops ring issuance for new primes.
+does not follow it when either is changed. A value of 0 stops ring issuance for new primes.
 
 Local settings (snapshot interval, resend times, awards file, sync sizes) do not affect
 what is valid, so each node chooses its own. A lower limit on sizes or key strength is
