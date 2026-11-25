@@ -63,8 +63,8 @@ Supersedes an earlier draft with separate "deeds" per prime.
   factorization.
 - **Ledger:** all money and ownership live on the main chain's ledger
   (committed by `finance_root`). Ring chains hold only the mathematical
-  evidence. Pro-rata payouts use a per-unit accumulator, so the cost does not
-  depend on the number of holders.
+  evidence. Awards from splits are computed from the rows and the ownership
+  history and are not written per owner (R13 of `rings-design.md`).
 - **Supply invariant,** checked every block: the change in total supply
   equals everything issued in that block (main reward plus ring payouts
   credited). Fees move money and never create it.

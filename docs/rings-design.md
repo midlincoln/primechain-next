@@ -252,8 +252,8 @@ together with canonical generators modulo units.
   quadratic and cubic rings everything goes to the main-chain prime's holders.
   The total stays 35% at any depth. Rings that are not PIDs, not open, or have
   not reached q are skipped. A non-Galois ring that sits in a larger ring in
-  several ways counts once per embedding. Holders are those **at the moment the
-  entry is paid** (R1, R13; spin-off model, `monetary-layer.md`).
+  several ways counts once per embedding. Holders are those **at the end of the
+  block before the entry is paid** (R13; spin-off model, `monetary-layer.md`).
 - **The genesis primes 2 and 3 have no holders (D7), so their 35% goes to the
   validators** (2026-11-25), at most twice per ring. It is shared equally
   between the active validators' payout addresses with the epoch distribution
@@ -282,27 +282,34 @@ together with canonical generators modulo units.
   ideal is issued twice, whatever order rings open in. Below it lie only
   primes with f = 1.
 
-### R13. Upstream payouts are claimed (2026-11-25)
+### R13. Ring awards are computed, not written (revised 2026-11-25)
 
-- When a ring entry pays, its miner and founder are credited at once. For the
-  upstream share the chain writes **one record per new prime and per level
-  below** (which prime earned how much of which new prime, at block h). No
-  owner lists are written: the ledger already fixes who owned what at h.
-- Owners receive their share by a **claim**, pro rata to the balance they held
-  at h. The protocol computes the amount and every validator checks it; a
-  marker per address and asset prevents double payment. No proof of past
-  ownership is needed, since the chain keeps the balance history.
-- **Anyone may trigger a claim for any address**, paying the fee. The payout
-  can only go to the rightful address, so wallets or a distribution script may
-  do it, and nothing is lost if a script stops.
-- **All owned units earn from higher rings, claimed or not.** Each ring prime is
-  issued once, so what an owner is due can be looked up. Counting claimed units
-  only was rejected: it favors ring miners and founders (see
-  `experiments/nested_rings/`).
-- A balance counts as it stood at the end of the block before h; payouts apply
-  before the block's transfers. A claim is applied automatically before its
-  owner spends that prime. Units held by no one (fee pool) earn nothing.
+Replaces payout records and claims (agreed earlier the same day).
+
+- **The row is the payout record.** It says which prime produced which new primes, in
+  which ring, by which miner, and in which main block h. The registry gives the
+  founder's payee and the schedule, and the ledger fixes who owned the primes below.
+  So what an address is due can be computed by every validator, and nothing is
+  written for an owner:
+  **owned = due from the row + received − sent.**
+  Exact formula: `ring-records.md`, section 4.
+- **There are no claims and no distribution script.** Awards belong to their owners
+  from block h. Units are checked when spent.
+- **All owned units earn from higher rings,** spent before or not. Each ring prime is
+  issued once, so what an owner is due can be looked up.
+- A balance counts as it stood at the end of the block before h; payouts apply before
+  the block's transfers. If a prime is sold in the block of its split, the award goes
+  to the seller. Units held by no one (fee pool) earn nothing.
 - Amounts are rounded down per holder, and **the remainder is never issued**.
+- The ledger keeps the ownership history that payouts refer to; a new entry replaces
+  the last one if no payout lies between them.
+- **Awards file:** a node may keep a list of awards per address, so that it can be
+  browsed as in v1. It is rebuilt from the chain and is not part of any block.
+- Writing owners into blocks was considered and not chosen: the size would grow with
+  the number of owners, in every ring.
+- Tested in `experiments/nested_rings/` (`lookup.py`, `spend_test.py`), outside the
+  engine. The engine must repeat these tests, with the "pay everyone at once" ledger
+  alongside.
 
 ## Proposed (awaiting agreement)
 
