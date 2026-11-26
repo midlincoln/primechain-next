@@ -15,7 +15,7 @@ field(pol,B0,tag) = {
   if(denominator(C)!=1, error("basis ",tag));
   my(T=vector(n,i,vector(n,j,C*nfalgtobasis(K,nfeltmul(K,B[,i],B[,j])))));
   my(M=floor((4/Pi)^K.r2*n!/n^n*sqrt(abs(K.disc))), gens=List(), rows=List());
-  my(g(P)=nfalgtobasis(K,red(K,bnfisprincipal(K,P,1)[2])));
+  my(g(P)=nfalgtobasis(K,red(K,bnfisprincipal(K,P,3)[2])));
   forprime(p=2,max(M,ROWMAX),
     my(L=idealprimedec(K,p), s=[P|P<-L,p^P.f<=M&&P.f<n], o=[P|P<-L,P.f==1]);
     if(p<=M, listput(gens,[p,[C*g(P)|P<-s]]));
@@ -33,3 +33,7 @@ brute(n,X,mx) = {my(S=List(),c=0); for(k=0,3^n-1, my(d=digits(3^n+k,3)[2..-1]);
   my(f='x^n+sum(i=1,n,(d[i]-1)*'x^(i-1))); if(polcoef(f,0)==0||!polisirreducible(f),next);
   if(abs(nfdisc(f))>X,next); listput(S,polredabs(f)));
   S=vecsort(Set(S),(a,b)->sign(abs(nfdisc(a))-abs(nfdisc(b)))); foreach(S,f, if(c++>mx,break); field(f,0,"brute"))};
+\\ a few cubic PIDs near a given size of discriminant (x^3 + a x + b), for mining tests
+bigcubic(X,cnt) = {my(c=0,a,b,f); while(c<cnt, a=random(2*X^(1/3)\1)-X^(1/3)\1; b=random(X^(1/2)\2); f=x^3+a*x+b;
+  if(!polisirreducible(f)||abs(poldisc(f))<X/4||abs(poldisc(f))>4*X, next); f=polredbest(f); my(K=bnfinit(f,1)); if(K.no>1,next);
+  if(abs(K.disc)<X/10,next); c++; field(f,0,Str("big",X)))};

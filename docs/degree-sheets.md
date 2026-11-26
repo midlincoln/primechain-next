@@ -53,6 +53,32 @@ Notes:
   listed units have full rank.
 - **Open:** how miners find generators, large discriminants, byte formats.
 
+## Rings inside rings (B, proposed 2026-11-26)
+
+Example: K = Q(⁴√2), from x⁴ − 2 (a PID, D = −2048, not Galois) contains Q(√2). At q = 7,
+K has two primes of norm 7 and one of norm 49; Q(√2) has two primes of norm 7, with roots
+3 and 4. **Both norm-7 primes of K lie over the same prime of Q(√2), and which one depends
+on how Q(√2) sits inside K:** √2 ↦ x² puts them over root 4, √2 ↦ −x² over root 3. Both
+are valid. The same happens at 23, 31, 47, 71 and 79 (tested with PARI).
+
+Award flow for one prime X of K (R11): miner 50%, founder 15%, 35% upstream. With Q(√2)
+open, the Q(√2) prime under X receives the 35%; its holders keep 17.5% and pass 17.5% to
+the holders of 7. The other Q(√2) prime over 7 receives nothing from this row. In
+Q(ζ8) = Q(i, √2) at q = 17, each prime of K lies over three primes, one in each quadratic
+subring: each receives 11.67%, keeps 5.83%, and 17 receives 3 × 5.83% = 17.5%.
+
+Rules this needs:
+
+1. **The embedding is recorded,** as the images of the subring's basis in K. Validators
+   check that it is a ring map (the subring's table holds for the images). When several
+   images exist, the one with the smallest coordinates (in a fixed order) is used, so
+   nobody can choose which holders are paid.
+2. **A link is its own record:** a subring may open after K. Anyone may submit the
+   embedding for a pair of open rings; awards use it from the block that includes it. A
+   non-PID or unopened subring is skipped (R11).
+3. Labels go down directly: the label of X restricted to the subring's basis is the label
+   of the prime below.
+
 ## Activation (proposed)
 
 1. The proposal names the sheet, its test vectors and the exact code commit (by hash).

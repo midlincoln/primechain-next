@@ -35,4 +35,21 @@ Findings:
    example Q(sqrt 10)), so they can never be opened and are skipped (R11).
 8. **Equal discriminants:** 15 pairs, told apart by the first prime 3 to 43.
 
-Not covered: mining (finding generators), large discriminants, engine records.
+## Mining (A, 2026-11-26)
+
+`mine.py` finds generators: the prime is a lattice; LLL under the complex embeddings gives
+a short element whose norm is q times a small m; m = 1 gives the generator, otherwise the
+miner divides by generators of earlier rows (the chain is the miner's factor base). Then
+it shortens with the units. Every result is checked with `degree.py`.
+
+- 5 small cubic rings, all 310 rows up to 300: all found, 22 ms per row (Python).
+- `bigmine.py`: six complex cubic PIDs with abs(D) from 1.5·10⁵ to 9.4·10⁸, primes of
+  3, 9 and 15 digits: every generator found, 7 to 141 ms per prime, no division needed.
+- Generators grow with the regulator, as for quadratics: largest coefficient about
+  14–28 bits at abs(D) ≈ 10⁵, up to 980 bits at 3·10⁷ and 5,400 bits at 9·10⁸.
+- Certificate generators: about 0.1 KB at abs(D) ≈ 1.5·10⁵, 5 KB at 3.6·10⁶, 59 KB at
+  3.4·10⁷, 0.7–1.3 MB at 9·10⁸ (above the 256 KB limit).
+- Mining cost hardly depends on q: finding is as cheap as checking (as on the main
+  chain). Real cubic rings (two units) are not measured yet.
+
+Not covered: real cubic rings at large D, degree 4 and up mining, engine records.
