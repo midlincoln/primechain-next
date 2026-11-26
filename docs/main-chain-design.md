@@ -151,6 +151,9 @@ validator requires **four independent validators** (separate operators, hosts
 and keys), with quorum 3; the protocol does not change. Documentation and
 papers must say this explicitly.
 
+Validator policy (founder-run validators said openly, checking nodes, path for
+investor-appointed validators): `validator-policy.md` (2026-11-26).
+
 ### D15. Miner keys and signatures (2026-11-23)
 
 - **Key registry:** a miner's public key is stored once in the chain's
