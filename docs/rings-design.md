@@ -166,9 +166,11 @@ Each ring's registry record carries:
   change the policy for future rings only, with notice. Existing ring bonds
   keep their terms.
 
-The starting schedule is a budget per main-chain prime shared by the open rings
-(2026-11-25, `protocol-parameters.md`), chosen after a simulation of options A–D
-(`monetary-layer.md`). Its numbers are protocol parameters (D20); the format
+The starting schedule (rule A4, 2026-11-26, `protocol-parameters.md`) gives each
+ring prime a fixed value (100,000 micro-units to start), so every accepted ring adds
+money and the number of rings accepted is the monetary lever. It replaced a budget per
+main-chain prime shared by the open rings (A3, chosen after a simulation of options A–D
+in `monetary-layer.md`). Its numbers are protocol parameters (D20); the format
 covers the other options.
 
 ### R7. Ordering by main-chain prime, in segments (revised 2026-11-25)
@@ -295,8 +297,8 @@ i = 0.
   PID. This does not change the order of work: quadratic rings (all Galois)
   come first.
 - **Each prime above q with f = 1 (norm exactly q) issues e/n of the entry's
-  full amount,** where n is the degree. With the ring budget this is e times the
-  ring's share of the budget, in every degree (`protocol-parameters.md`). Primes with f > 1 issue nothing and
+  full amount,** where n is the degree. Under rule A4 this is e times the value
+  of a ring prime, in every degree (`protocol-parameters.md`). Primes with f > 1 issue nothing and
   create no asset. In quadratic rings this is R8, R9 and R11 unchanged: split
   1/2 + 1/2, ramified 1, inert 0.
 - The average issuance per row is 1/n in every ring (a transitive group has

@@ -12,11 +12,11 @@ goes into the rules; starting values only need to be reasonable and safe.
    height. Parameters are named in the vote, as old value → new value.
 3. **Never retroactive.** A row, reward or fee uses the values in force at its own main
    block h. The table's history is kept, because ring awards are computed later (R13).
-   Exception (proposed): the ring budget counts as of the block in which the row's
-   main-chain prime was mined, so that nobody gains by timing a row around a vote.
+   The value of a ring prime (17) is fixed per ring when it opens (rule 4), so nobody
+   gains by timing a row around a vote.
 4. **Ring terms are fixed when the ring opens** (R6): founder share and schedule
-   parameters. A vote changes them for later rings only. The budget and the number of
-   open rings are common to all rings and can change.
+   parameters and the value of a ring prime (17). A vote changes them for later rings
+   only.
 5. **Every parameter needs protocol approval to change** (agreed 2026-11-25): the same
    vote with notice for all of them, with no exception for small ones.
    **Ranges:** a model built later will suggest a comfortable range for each parameter.
@@ -58,8 +58,8 @@ so far. The rest is designed or planned.
 | 15 | message size and pending submissions per miner | to be set | A3.2 |
 | 16 | validator minimum reserve | to be set | A3-2 |
 | | **Ring rewards** | | |
-| 17 | **ring budget per main-chain prime (micro-units)** | 1,000,000 | R6 |
-| 18 | exponent x of the weight 1/j^x of ring j | 1/2 | R6 |
+| 17 | **value of a new ring prime (micro-units)** | 100,000 | R6, rule A4 |
+| 18 | exponent x of the weight 1/j^x of ring j (rule A3 only, unused under A4) | 1/2 | R6 |
 | 19 | share paid for primes older than the ring | 10% | R6 |
 | 20 | ring miner's share (gets what 21 and 22 leave) | 50% | R11 |
 | 21 | upstream share (owners of the primes below) | 35% | R11 |
@@ -90,14 +90,49 @@ so far. The rest is designed or planned.
 | | **Later (banks, loans)** | | |
 | 43 | membership stock, part paid in, dividend cap, loan limits | 6%, half, to be set | monetary-layer |
 
-The ring budget (17) is a number of its own: it starts equal to the main reward (1) and
-does not follow it when either is changed. A value of 0 stops ring issuance for new primes.
+The value of a ring prime (17) is a number of its own and does not follow the main
+reward (1) when either is changed. A value of 0 stops ring issuance for new primes.
 
 Local settings (snapshot interval, resend times, awards file, sync sizes) do not affect
 what is valid, so each node chooses its own. A lower limit on sizes or key strength is
 bounded in code (rule 5).
 
-## Ring issuance (starting rule A3, 2026-11-25)
+## Ring issuance (starting rule A4, agreed 2026-11-26)
+
+**Parameter 17 is the value of each new ring prime,** not a budget shared by all rings.
+The entry of a ring for main-chain prime q issues
+
+  for each of its primes of norm q:  v · e,
+
+where v is parameter 17 (starting value 100,000 micro-units, a tenth of the main reward)
+and e is the prime's ramification index. By R12 a ring has on average one prime of norm
+q per row (counted with e), so every ring earns about v per main-chain prime, in every
+degree. Primes mined before the ring opened ("backlog") pay the share in parameter 19
+(10%). Each payment is split by R11: ring miner 50%, holders of the main-chain prime 35%,
+founder 15%. v is fixed for each ring when it opens (rule 4), so a vote on v changes
+only later rings.
+
+**Every accepted ring adds money, so the number of rings the validators accept is the
+monetary lever** (the "algebraic Fed"), together with v. The limit on new rings (κ,
+parameter 25) bounds it. Model, year 11 at constant speed, rings accepted every year
+from year 1 (`experiments/fed_rings/per_ring.py`; unit: one year of main issuance):
+
+| v (micro-units) | rings per year | supply growth, year 11 | yield to holders of main primes | supply, year 11 |
+|---|---|---|---|---|
+| 1,000,000 | 10 | 20% | 35% | 726 |
+| **100,000** | **10** | **19%** | **3.5%** | **83** |
+| 100,000 | 20 | 19% | 7% | 154 |
+| 10,000 | 10 | 14% | 0.3% | 18 |
+
+The yield comes from the backlog: each new ring pays 10% of v for every older main-chain
+prime, and its holders get 35% of that, so
+
+  yearly yield ≈ 35% · 10% · (v / main reward) · (rings accepted per year).
+
+With main-chain issuance alone, growth in year 11 is 10% and there is no yield. Which
+rings count for the backlog is still open.
+
+### Previous rule A3 (2026-11-25, replaced)
 
 Each main-chain prime q has a **ring budget** (parameter 17). The entry of ring
 j for q issues

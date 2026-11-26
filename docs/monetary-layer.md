@@ -420,6 +420,12 @@ chain. A bounded total means that new rings dilute old ones (A) or earn little (
 the limit on new rings (κ) is needed with any rule. Numbers are parameters (D20,
 `protocol-parameters.md`).
 
+**Changed (2026-11-26): rule A4.** Each ring prime has a fixed value (parameter 17,
+100,000 micro-units to start) instead of sharing one budget, so every accepted ring adds
+money. The number of rings accepted and that value are the monetary levers; with 10
+rings a year, supply grows about 19% in year 11 and holders of main-chain primes earn
+about 3.5% a year from the backlog shares of new rings (`protocol-parameters.md`).
+
 **Decided (2026-11-23): one unit of account.** All micro-units are equal,
 whether issued by the main chain or by any ring. Ring issuance is the same
 money, so budgets across rings (options A–D) are well defined.
