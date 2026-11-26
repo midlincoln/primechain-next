@@ -67,17 +67,28 @@ the holders of 7. The other Q(√2) prime over 7 receives nothing from this row.
 Q(ζ8) = Q(i, √2) at q = 17, each prime of K lies over three primes, one in each quadratic
 subring: each receives 11.67%, keeps 5.83%, and 17 receives 3 × 5.83% = 17.5%.
 
-Rules this needs:
+**This is one subring with two possible names,** not two subrings: x² and −x² generate the
+same elements. Q(√2) has a symmetry (√2 ↔ −√2) that swaps its two primes over 7, and
+nothing in K prefers one name. Genuinely different subrings also occur (a cubic ring sits
+in three different ways inside the degree-6 ring that contains all three of its versions).
 
-1. **The embedding is recorded,** as the images of the subring's basis in K. Validators
-   check that it is a ring map (the subring's table holds for the images). When several
-   images exist, the one with the smallest coordinates (in a fixed order) is used, so
-   nobody can choose which holders are paid.
-2. **A link is its own record:** a subring may open after K. Anyone may submit the
-   embedding for a pair of open rings; awards use it from the block that includes it. A
-   non-PID or unopened subring is skipped (R11).
-3. Labels go down directly: the label of X restricted to the subring's basis is the label
-   of the prime below.
+Rules (agreed 2026-11-26):
+
+1. **Every way of fitting in counts, with an equal part** (as R11 already says). In the
+   example each of the two Q(√2) primes over 7 receives 8.75% of each new prime and 7
+   receives 17.5%. A genuine tie is split; nobody chooses who is paid. For genuinely
+   different subrings this is the same as counting each once.
+2. **Links are recorded with all ways,** as the images of the subring's basis in K.
+   Validators check that each is a ring map and that the list is complete (method to be
+   tested). If the subring is already open, the certificate of K carries the link;
+   otherwise **anyone may submit it later**, with a normal fee. Awards use it from the main
+   block that includes it, never before; until then the subring is skipped (R11).
+3. Labels go down directly: the label of X restricted to the subring's basis.
+
+Checked (`experiments/degrees/twice.py`): in x⁴ − 2 over Q(√2) (666 new primes, q < 5000)
+and in Q(ζ8) over its three quadratic subrings (644 new primes), each new prime passes
+exactly 35% down, less at most 2 units of rounding, and only to primes over the same q.
+No prime is counted twice.
 
 ## Activation (proposed)
 
