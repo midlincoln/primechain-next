@@ -141,12 +141,14 @@ struct Outgoing {
 
 class Node {
 public:
-    Node(Bytes consensus_public, Bytes consensus_secret, Engine engine, Crypto crypto, Timing timing = {},
-         Retention retention = {});
+    // Timing and retention come from the parameter table (D20) unless overridden locally (tests).
+    Node(Bytes consensus_public, Bytes consensus_secret, Engine engine, Crypto crypto,
+         std::optional<Timing> timing = std::nullopt, std::optional<Retention> retention = std::nullopt);
     // Restart from durable state: the engine (reopened from its Store) is advanced through the
     // logged decisions it has not applied yet, and the instance state is restored.
     static Node restore(Bytes consensus_public, Bytes consensus_secret, Engine engine, const Durable& durable,
-                        Crypto crypto, Timing timing = {}, Retention retention = {});
+                        Crypto crypto, std::optional<Timing> timing = std::nullopt,
+                        std::optional<Retention> retention = std::nullopt);
 
     void start(std::uint64_t now, std::vector<Outgoing>& out);
     void receive(const Message& message, std::uint32_t from, std::uint64_t now, std::vector<Outgoing>& out);
@@ -214,8 +216,10 @@ private:
     Bytes secret_;
     Engine engine_;
     Crypto crypto_;
-    Timing timing_;
-    Retention retention_;
+    std::optional<Timing> timing_override_;
+    std::optional<Retention> retention_override_;
+    Timing timing() const;
+    Retention retention() const;
 
     // Current instance.
     InstanceId id_;

@@ -13,6 +13,7 @@ The core engine for PrimeChain Next, built from `docs/main-chain-design.md`
 | `merkle.hpp/.cpp` | SHA3-256 Merkle tree, RFC 6962 shape (no leaf duplication); leaf/node/empty domain bytes 0x00/0x01/0x02 |
 | `model.hpp/.cpp` | Range and prime submissions with domain-separated signing payloads, accepted ranges, block header (D9) and block; versioned encodings (D12) |
 | `store.hpp/.cpp` | D19 persistence: append-only block file with checksummed frames, derived height index, atomic state snapshots |
+| `parameters.hpp/.cpp` | D20 parameter table: ids, bounds, history, digest |
 | `engine.hpp/.cpp` | In-memory engine: genesis {2, 3} (D7); range validation and competition (D1, D2, D4); Pratt-checked closing prime (D5); per-composite rewards (D8); block sealing; full replay; governance tally (A3-2); hooks to propose, check and apply consensus values |
 | `consensus.hpp/.cpp` | A3.1 consensus core: per-instance (h, k) two-phase rounds, certificates, retention, proposer skip, equivocation evidence, durable state for restart |
 
@@ -157,6 +158,22 @@ Results (1 vCPU shared with a live validator, `nice -n 19`):
 | `next_consensus_fuzz` | 20 seeds, n = 3–5, loss up to 29%, delays up to 420 ms, 59 partitions, 37 crash/restarts, 3,636 instances: no conflicts, progress after healing |
 
 Clean under AddressSanitizer and UndefinedBehaviorSanitizer.
+
+## B3.1: parameter table (D20)
+
+`parameters.hpp/.cpp`: every number is a protocol parameter (36, ids 1–36), with placeholder
+hard bounds in code and a history, so `parameterAt(id, h)` gives the value for any block.
+Votes are one kind, `ParamChange` (id, old value, new value), with notice; a change applies
+from its effective height and never retroactively. Headers carry the digest of the table in
+force. Details: `docs/main-chain-design.md`, "B3.1 implementation notes".
+
+Test: `ctest -R next_parameters` (every parameter voted and in force exactly after the notice;
+refusals at submission, inclusion and activation; reward, finder share, fee and epoch changing
+only from block H; replay and restart keep the table and its history).
+
+**Not yet built or run (2026-11-26, low memory on the host):** the consensus changes (proposer
+skip, timeouts and retention from the table) and the adapted `next_consensus_governance` test;
+also `next_generated_chain`, `next_consensus_chain` and the ASan builds.
 
 ## Deferred
 

@@ -413,6 +413,39 @@ notice (A3-2) and never retroactively. Rules, bounds and the table:
 `protocol-parameters.md`. The engine's `Policy` holds some of them today, and only the
 minimum fee can be voted on; the rest follows with B3 and A3.2.
 
+### B3.1 implementation notes (2026-11-26)
+
+The parameter table (`next/include/primechain_next/parameters.hpp`). Choices the design left
+open, for review:
+
+1. **Ids and units:** 36 parameters with stable ids 1–36 (never renumbered or reused), all
+   unsigned integers: micro-units, blocks, bytes, milliseconds, basis points (10,000 =
+   100%), and the ring weight exponent as two parameters (numerator, denominator). Shares
+   whose partner takes the rest are not parameters: composites (D8) and the ring miner (R11).
+   "To be set" entries of the table are not included yet.
+2. **Hard bounds** are placeholders in code. The range limit (1,024) and the main-chain
+   integer size (64 bytes) cannot be raised by vote, because decoders reject larger
+   messages before any check; raising them is an upgrade. Combined rules: ring upstream plus
+   founder ≤ 100%, timeout cap ≥ base.
+3. **History:** per parameter, (from height, value). The value in force for block h is the
+   last entry with from ≤ h. The table and its history are in the snapshot and in the state
+   root (through the governance digest).
+4. **Headers:** `policy_digest` is the digest of the table in force for that block. The
+   genesis configuration digest (network, limits, starting table) only guards snapshots.
+5. **One kind of vote:** `ParamChange` with a list of (id, old value, new value), replacing
+   the fee-only vote. Form check: known ids in increasing order, new values within bounds and
+   different from the old ones. At inclusion of each vote: the old values must be the values
+   in force for that block, and the result must satisfy the combined rules; otherwise the vote
+   is not included. At activation the change applies only if every old value still holds;
+   otherwise it is dropped whole (an earlier change moved it). The notice is the value in force
+   at the block that completes the quorum.
+6. **Consensus:** the proposer-skip count is read for the block being decided (it affects who
+   may propose). Timeouts and certificate retention are not validity rules; a node follows
+   the table unless its operator overrides them locally (the tests do).
+7. **Engine reads:** reward, finder share, range limit, integer size, minimum fee, outputs,
+   epoch length and notice, each for the block being built. Ring and cash parameters are only
+   stored for now.
+
 ### Fixed by earlier work
 
 - **Consensus:** two-phase (prevote/precommit) rounds, lock on a quorum of

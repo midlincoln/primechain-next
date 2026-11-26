@@ -9,7 +9,7 @@
 namespace primechain::next {
 
 constexpr std::uint64_t kVersion1 = 1;
-constexpr std::uint64_t kMaxRangeComposites = 1024;  // D4.6: longer gaps take several ranges
+constexpr std::uint64_t kMaxRangeComposites = 1024;  // D4.6 hard bound (decoders); the voted limit is a parameter (D20)
 
 // Decode limits; every decoder is bounded.
 struct Limits {
@@ -116,13 +116,20 @@ struct ValidatorRecord {
 // A3-2: governance. A proposal is position-independent: it names its content, the heights at
 // which it takes effect and expires, a sequence number and the validator set that votes on it,
 // but nothing about the chain tip, so votes stay valid while the chain moves.
-enum class GovernanceKind : std::uint8_t { FeeChange = 1, ValidatorAdd = 2, ValidatorRemove = 3 };
+enum class GovernanceKind : std::uint8_t { ParamChange = 1, ValidatorAdd = 2, ValidatorRemove = 3 };
+
+// D20: one parameter changed from `old_value` (must be the value in force) to `new_value`.
+struct ParameterChange {
+    std::uint32_t id{0};
+    u128 old_value{0};
+    u128 new_value{0};
+};
 
 struct GovernanceProposal {
     std::uint64_t version{kVersion1};
     std::string network_id;
-    GovernanceKind kind{GovernanceKind::FeeChange};
-    std::uint64_t new_min_fee{0};        // FeeChange
+    GovernanceKind kind{GovernanceKind::ParamChange};
+    std::vector<ParameterChange> changes;  // ParamChange: increasing parameter ids
     ValidatorRecord validator;           // ValidatorAdd (binding signed by both keys, D10)
     Hash256 remove_key_hash{};           // ValidatorRemove: sha3 of the consensus key
     std::uint64_t effective_height{0};

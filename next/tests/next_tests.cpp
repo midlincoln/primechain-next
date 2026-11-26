@@ -10,6 +10,7 @@
 #include <chrono>
 #include <fstream>
 #include <map>
+#include <set>
 #include <iostream>
 #include <stdexcept>
 
@@ -597,6 +598,244 @@ void persistenceTests() {
     std::cout << "persistence: PASS (" << checks << " checks)\n";
 }
 
+// ---------------------------------------------------------------- B3.1: parameter table (D20)
+struct Val {
+    Miner consensus;
+    Miner payout;
+    ValidatorRecord record;
+};
+Val newVal(const std::string& network_id) {
+    Val v{newMiner(), newMiner(), {}};
+    v.record.consensus_key = v.consensus.key.public_key;
+    v.record.payout_address = v.payout.address;
+    v.record.payout_key = v.payout.key.public_key;
+    const Bytes payload = validatorBindingPayload(network_id, v.record);
+    v.record.consensus_signature = sign(v.consensus, payload);
+    v.record.payout_signature = sign(v.payout, payload);
+    return v;
+}
+std::uint32_t pid(Param p) { return static_cast<std::uint32_t>(p); }
+
+// One block with ranges by `ranger` and the prime by `finder` (distinct roles, so rewards are visible).
+Block mineBlock(Engine& e, const Miner& ranger, const Miner& finder) {
+    std::string error;
+    const std::uint64_t p = nextPrime(e.chainFrontier().get_ui());
+    submit(e, makeRange(e, ranger, e.chainFrontier().get_ui() + 1, p - 1));
+    while (e.decideNextRange()) {}
+    auto b = e.closeBlock(makePrime(e, finder, p), error);
+    require(b.has_value(), "block: " + error);
+    return *b;
+}
+
+void parameterTests() {
+    std::string error;
+    // 1. The table: every default within its bounds, ids unique, genesis checked.
+    {
+        std::set<std::uint32_t> ids;
+        for (const auto& s : parameterSpecs()) {
+            require(ids.insert(pid(s.id)).second, "unique parameter id");
+            require(s.min <= s.start && s.start <= s.max, std::string("default within bounds: ") + s.name);
+        }
+        require(checkParameters(defaultParameters()).empty(), "defaults pass");
+        Policy bad;
+        bad.parameters[pid(Param::MaxRangeComposites)] = 1025;
+        bool threw = false;
+        try { Engine x(bad); } catch (const std::invalid_argument&) { threw = true; }
+        require(threw, "genesis out of bounds refused");
+        Policy unknown;
+        unknown.parameters[999] = 1;
+        threw = false;
+        try { Engine x(unknown); } catch (const std::invalid_argument&) { threw = true; }
+        require(threw, "unknown genesis parameter refused");
+        Policy shares;
+        shares.parameters[pid(Param::RingUpstreamShareBp)] = 9000;
+        threw = false;
+        try { Engine x(shares); } catch (const std::invalid_argument&) { threw = true; }
+        require(threw, "ring shares above 100% refused");
+    }
+
+    Policy policy;
+    policy.governance_notice = 3;
+    policy.epoch_length = 1000;
+    std::vector<Val> vals;
+    Genesis genesis;
+    for (int i = 0; i < 3; ++i) {
+        vals.push_back(newVal(policy.network_id));
+        genesis.validators.push_back(vals.back().record);
+    }
+    const Miner R = newMiner(), F = newMiner();
+    std::uint64_t sequence = 0;
+    auto proposal = [&](const Engine& e, std::vector<ParameterChange> changes) {
+        GovernanceProposal p;
+        p.network_id = policy.network_id;
+        p.kind = GovernanceKind::ParamChange;
+        p.changes = std::move(changes);
+        p.effective_height = 0;
+        p.expiry_height = e.height() + 50;
+        p.sequence = ++sequence;
+        p.validator_set_digest = e.validatorSetDigest();
+        return p;
+    };
+    auto vote = [&](Engine& e, const GovernanceProposal& p, std::initializer_list<int> who) {
+        bool ok = true;
+        for (int i : who) {
+            GovernanceTx t;
+            t.kind = GovernanceTxKind::Vote;
+            t.proposal = p;
+            t.signer_key = vals[i].consensus.key.public_key;
+            t.signature = sign(vals[i].consensus, governanceSigningPayload(t));
+            std::string why;
+            ok &= e.submitGovernance(t, why);
+        }
+        return ok;
+    };
+    // The order in which the engine finds the validators (for rewards) is not needed here.
+
+    // 2. Every parameter can be voted and takes effect exactly after the notice.
+    {
+        Engine e(policy, genesis);
+        mineTo(e, 200, {R, F});
+        const std::uint64_t h = e.height() + 1;  // the block that includes the votes
+        std::map<std::uint32_t, u128> want;
+        for (const auto& s : parameterSpecs()) {
+            const u128 old = e.parameter(s.id);
+            const u128 next = old < s.max ? old + 1 : old - 1;
+            want[pid(s.id)] = next;
+            require(vote(e, proposal(e, {{pid(s.id), old, next}}), {0, 1}), std::string("vote accepted: ") + s.name);
+        }
+        mineBlock(e, R, F);
+        require(e.height() == h && e.scheduledChanges() == parameterSpecs().size(), "every change scheduled at quorum");
+        const std::uint64_t effective = h + policy.governance_notice;
+        while (e.height() + 1 < effective) mineBlock(e, R, F);
+        for (const auto& s : parameterSpecs())
+            require(e.parameterAt(s.id, effective - 1) != want[pid(s.id)] && e.parameter(s.id) == want[pid(s.id)],
+                    std::string("in force exactly from inclusion + notice: ") + s.name);
+        require(e.parameters().changeCount() == parameterSpecs().size(), "one history entry per change");
+        for (const auto& s : parameterSpecs())
+            require(e.parameterAt(s.id, 1) == defaultParameters().at(pid(s.id)) || pid(s.id) == pid(Param::GovernanceNotice) ||
+                        pid(s.id) == pid(Param::EpochLength),
+                    "past values unchanged");
+        require(e.parameterAt(Param::GovernanceNotice, 1) == 3 && e.parameterAt(Param::EpochLength, 1) == 1000, "genesis values kept");
+        const auto& b = e.blocks();
+        require(b[effective - 2].header.policy_digest == parametersDigest(e.parameters().valuesAt(effective - 1)) &&
+                    b[effective - 2].header.policy_digest != parametersDigest(e.parameters().valuesAt(effective)),
+                "header digest names the table of its own block");
+        mineBlock(e, R, F);
+        require(e.blocks().back().header.policy_digest == parametersDigest(e.parameters().valuesAt(effective)), "new digest from H");
+        auto replayed = Engine::replay(policy, genesis, e.blocks(), error);
+        require(replayed && replayed->stateRoot() == e.stateRoot() && replayed->tip() == e.tip() &&
+                    replayed->parameters() == e.parameters(),
+                "replay reproduces the table and its history: " + error);
+    }
+
+    // 3. Refused: out of bounds, unknown, no effect, unordered (form); stale and inconsistent (inclusion);
+    //    and a change whose old value was moved by an earlier one (activation).
+    {
+        Engine e(policy, genesis);
+        mineTo(e, 100, {R, F});
+        auto formRefused = [&](std::vector<ParameterChange> c, const std::string& what) {
+            require(!vote(e, proposal(e, std::move(c)), {0}), "refused at submission: " + what);
+        };
+        formRefused({{pid(Param::MaxRangeComposites), 1024, 1025}}, "above the hard bound");
+        formRefused({{pid(Param::RsaKeyBits), 3072, 2048}}, "below the hard bound");
+        formRefused({{999, 0, 1}}, "unknown parameter");
+        formRefused({{pid(Param::MinFee), 1, 1}}, "no effect");
+        formRefused({{pid(Param::MaxOutputs), 1000, 900}, {pid(Param::MinFee), 1, 2}}, "ids out of order");
+        formRefused({}, "empty");
+        const auto stale = proposal(e, {{pid(Param::MinFee), 5, 6}});
+        const auto shares = proposal(e, {{pid(Param::RingUpstreamShareBp), 3500, 9000}});
+        require(vote(e, stale, {0, 1}) && vote(e, shares, {0, 1}), "form passes");
+        mineBlock(e, R, F);
+        require(e.votesFor(proposalId(stale)) == 0 && e.votesFor(proposalId(shares)) == 0 && e.scheduledChanges() == 0,
+                "stale old value and shares above 100% are not included");
+        const auto first = proposal(e, {{pid(Param::MinFee), 1, 2}});
+        const auto second = proposal(e, {{pid(Param::MinFee), 1, 3}, {pid(Param::MaxOutputs), 1000, 999}});
+        require(vote(e, first, {0, 1}) && vote(e, second, {0, 2}), "both votes accepted");
+        mineBlock(e, R, F);
+        require(e.scheduledChanges() == 2, "both pass at inclusion (1 is still in force)");
+        for (int i = 0; i < 4; ++i) mineBlock(e, R, F);
+        require(e.minFee() == 2 && e.parameter(Param::MaxOutputs) == 1000 && e.scheduledChanges() == 0,
+                "the second change is dropped whole at activation: its old value moved");
+    }
+
+    // 4. Changes at H affect blocks >= H only: reward, finder share, fee, epoch length.
+    {
+        Engine e(policy, genesis);
+        mineTo(e, 100, {R, F});
+        const auto p = proposal(e, {{pid(Param::MainReward), 1000000, 2000000},
+                                    {pid(Param::FinderShareBp), 5000, 7000},
+                                    {pid(Param::MinFee), 1, 5},
+                                    {pid(Param::EpochLength), 1000, 7}});
+        require(vote(e, p, {1, 2}), "vote");
+        const Integer asset = assetWith(e, R, 1000);
+        require(e.submitTransfer(makeTransfer(e, R, {{asset, Amount(11)}}, {{asset, Amount(10), F.address}}, asset, 1, 1), error),
+                "fee 1 accepted before the change: " + error);
+        mineBlock(e, R, F);
+        const std::uint64_t H = e.height() + policy.governance_notice;
+        while (e.height() + 1 < H) {
+            const Block b = mineBlock(e, R, F);
+            const Integer q = b.header.prime;
+            const std::uint64_t count = Integer(q - b.ranges.front().accepted_start).get_ui();
+            const std::uint64_t comp = 500000 / count;
+            require(e.balance(F.address, q) == Amount(500000 + 500000 % count) &&
+                        e.balance(R.address, q) == Amount(comp * count),
+                    "old reward and split before H");
+        }
+        require(e.parameterAt(Param::MinFee, H - 1) == 1 && e.minFee() == 5, "old fee until block H - 1, new fee for H");
+        const Block b = mineBlock(e, R, F);  // block H
+        require(b.header.height == H, "block H");
+        const Integer q = b.header.prime;
+        const std::uint64_t count = Integer(q - b.ranges.front().accepted_start).get_ui();
+        const std::uint64_t comp_total = 2000000ull * 3000 / 10000, comp = comp_total / count;
+        require(e.balance(F.address, q) == Amount(2000000 - comp_total + comp_total % count) &&
+                    e.balance(R.address, q) == Amount(comp * count),
+                "new reward and split from H");
+        require(e.minFee() == 5, "new fee after H");
+        require(!e.submitTransfer(makeTransfer(e, R, {{asset, Amount(11)}}, {{asset, Amount(10), F.address}}, asset, 1, 2), error) &&
+                    error == "fee below minimum",
+                "fee 1 refused after H");
+        require(e.submitTransfer(makeTransfer(e, R, {{asset, Amount(15)}}, {{asset, Amount(10), F.address}}, asset, 5, 2), error),
+                "fee 5 accepted: " + error);
+        std::uint64_t paid_at = 0;
+        while (!paid_at) {
+            mineBlock(e, R, F);
+            if (e.feePoolBalance(asset) == Amount{} && e.height() % 7 == 0) paid_at = e.height();
+            require(e.height() < H + 20, "epoch payout within 7 blocks");
+        }
+        require(paid_at >= H, "new epoch length used only from H");
+        auto replayed = Engine::replay(policy, genesis, e.blocks(), error);
+        require(replayed && replayed->stateRoot() == e.stateRoot() && replayed->parameters() == e.parameters(), "replay: " + error);
+    }
+
+    // 5. Restart from a snapshot keeps the table and its history.
+    {
+        namespace fs = std::filesystem;
+        std::string tmpl = (fs::temp_directory_path() / "pcnext-params-XXXXXX").string();
+        require(mkdtemp(tmpl.data()) != nullptr, "temp dir");
+        Policy pp = policy;
+        pp.snapshot_interval = 5;
+        Hash256 state{}, tip{};
+        ParameterTable table;
+        {
+            auto e = Engine::open(tmpl + "/chain", pp, genesis, error);
+            require(e.has_value(), "open: " + error);
+            mineTo(*e, 60, {R, F});
+            require(vote(*e, proposal(*e, {{pid(Param::MaxOutputs), 1000, 10}}), {0, 2}), "vote");
+            mineBlock(*e, R, F);
+            for (int i = 0; i < 9; ++i) mineBlock(*e, R, F);
+            require(e->parameter(Param::MaxOutputs) == 10, "change in force");
+            state = e->stateRoot(); tip = e->tip(); table = e->parameters();
+        }
+        auto e = Engine::open(tmpl + "/chain", pp, genesis, error);
+        require(e && e->stateRoot() == state && e->tip() == tip && e->parameters() == table &&
+                    e->parameters().historyDigest() == table.historyDigest(),
+                "restart from snapshot keeps the table: " + error);
+        require(e->blocks().size() < e->height(), "the snapshot was used");
+        fs::remove_all(tmpl);
+    }
+    std::cout << "parameters: PASS (" << checks << " checks, " << parameterSpecs().size() << " parameters)\n";
+}
+
 // ---------------------------------------------------------------- generated chain + replay
 void chainTest(std::uint64_t limit) {
     const std::vector<Miner> miners{newMiner(), newMiner(), newMiner(), newMiner()};
@@ -651,8 +890,9 @@ int main(int argc, char** argv) {
         else if (mode == "engine") engineTests();
         else if (mode == "transfers") { transferTests(); distributionTests(); }
         else if (mode == "persistence") persistenceTests();
+        else if (mode == "parameters") parameterTests();
         else if (mode == "chain") chainTest(argc > 2 ? std::stoull(argv[2]) : 20000);
-        else throw std::runtime_error("usage: primechain-next-tests codec|engine|transfers|persistence|chain [limit]");
+        else throw std::runtime_error("usage: primechain-next-tests codec|engine|transfers|persistence|parameters|chain [limit]");
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "next test failed: " << e.what() << '\n';

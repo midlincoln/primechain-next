@@ -3,6 +3,7 @@
 // nothing is reloaded per request (see docs/v1-baseline-measurements.md). Optional persistence
 // (D19) appends every sealed block to a Store and snapshots the state every K blocks.
 #include "primechain_next/model.hpp"
+#include "primechain_next/parameters.hpp"
 #include "primechain_next/store.hpp"
 
 #include <map>
@@ -17,14 +18,18 @@ namespace primechain::next {
 struct Policy {
     std::string network_id{"primechain-next-dev"};
     Limits limits;
-    std::uint64_t reward_micro_units{1000000};  // D8: reward(p) returns this for every p at launch
+    // Genesis starting values of some parameters (D20); they seed the parameter table and are
+    // changed afterwards only by vote. Other parameters start from `parameters`, else their defaults.
+    std::uint64_t reward_micro_units{1000000};  // D8
     std::uint64_t min_fee_micro_units{1};       // D16 (v1: 1 micro-unit)
     std::uint64_t max_outputs{1000};            // D16 bulk-send cap
     std::uint64_t epoch_length{100};            // D17: the fee pool is distributed every N blocks
-    std::uint64_t snapshot_interval{1000};      // D19: state snapshot every K blocks
     std::uint64_t governance_notice{100};       // A3-2: minimum blocks between quorum and effect
     std::uint64_t proposer_skip_after{3};       // A3-3: skip a proposer after M consecutive missed turns
-    Hash256 digest() const;
+    ParameterValues parameters;                 // overrides of other starting values, by parameter id
+    std::uint64_t snapshot_interval{1000};      // D19: local setting, not a protocol parameter
+    ParameterValues genesisParameters() const;
+    Hash256 digest() const;                     // genesis configuration: network, limits, starting table
 };
 
 // D18: the genesis validator set (a trusted configuration, like v1's validators.txt).
@@ -32,8 +37,6 @@ struct Genesis {
     std::vector<ValidatorRecord> validators;
 };
 
-// D8 reward function. A later schedule changes only this function.
-std::uint64_t reward(const Policy& policy, const Integer& prime);
 
 class Engine {
 public:
@@ -60,7 +63,11 @@ public:
 
     // Governance (A3-2): votes and ready messages are tallied on chain.
     bool submitGovernance(const GovernanceTx& tx, std::string& error);  // form and signature only
-    std::uint64_t minFee() const { return min_fee_; }
+    std::uint64_t minFee() const { return static_cast<std::uint64_t>(parameter(Param::MinFee)); }
+    // D20: the value in force for the next block (height() + 1), or for any block height.
+    u128 parameter(Param id) const { return params_.value(id, height_ + 1); }
+    u128 parameterAt(Param id, std::uint64_t height) const { return params_.value(id, height); }
+    const ParameterTable& parameters() const { return params_; }
     std::size_t pendingGovernanceCount() const { return pending_governance_.size(); }
     std::size_t scheduledChanges() const { return scheduled_.size(); }
     std::size_t readyCount() const { return ready_.size(); }  // recorded "ready" messages
@@ -178,7 +185,7 @@ private:
     bool readyDead(const Hash256& id, std::uint64_t expiry, std::uint64_t sequence, std::uint64_t height) const;
     std::map<Hash256, Ready> ready_;                          // proposal id -> ready message
     std::vector<std::pair<std::uint64_t, GovernanceProposal>> scheduled_;  // (effective height, proposal)
-    std::uint64_t min_fee_{1};
+    ParameterTable params_;                                   // D20, with history
     std::uint64_t last_sequence_{0};
     Hash256 genesis_digest_{};
     std::uint64_t arrivals_{0};

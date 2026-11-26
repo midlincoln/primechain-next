@@ -369,6 +369,7 @@ if(PRIMECHAIN_BUILD_NEXT)
         next/src/codec.cpp
         next/src/merkle.cpp
         next/src/model.cpp
+        next/src/parameters.cpp
         next/src/engine.cpp
         next/src/store.cpp
         next/src/consensus.cpp
@@ -385,8 +386,9 @@ if(PRIMECHAIN_BUILD_NEXT)
     add_test(NAME next_engine_rules COMMAND primechain-next-tests engine)
     add_test(NAME next_transfers COMMAND primechain-next-tests transfers)
     add_test(NAME next_persistence COMMAND primechain-next-tests persistence)
+    add_test(NAME next_parameters COMMAND primechain-next-tests parameters)
     add_test(NAME next_generated_chain COMMAND primechain-next-tests chain 20000)
-    set_tests_properties(next_engine_rules next_transfers next_persistence next_generated_chain PROPERTIES TIMEOUT 600)
+    set_tests_properties(next_engine_rules next_transfers next_persistence next_parameters next_generated_chain PROPERTIES TIMEOUT 600)
     add_executable(primechain-next-consensus-tests next/tests/consensus_tests.cpp)
     set_target_properties(primechain-next-consensus-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
     target_link_libraries(primechain-next-consensus-tests PRIVATE primechain_next)

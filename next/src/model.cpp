@@ -159,7 +159,17 @@ bool readProposal(Reader& r, GovernanceProposal& p, const Limits& l) {
     if (!expectTag(r, kProposalTag, p.version) || !r.text(p.network_id, l.max_text) || !r.u8(kind) || kind < 1 || kind > 3)
         return false;
     p.kind = static_cast<GovernanceKind>(kind);
-    if (p.kind == GovernanceKind::FeeChange && !r.varint(p.new_min_fee)) return false;
+    if (p.kind == GovernanceKind::ParamChange) {
+        std::uint64_t count = 0;
+        if (!r.varint(count) || count == 0 || count > 256) return false;
+        p.changes.resize(count);
+        for (auto& c : p.changes) {
+            std::uint64_t id = 0;
+            Amount old_value, new_value;
+            if (!r.varint(id) || id > UINT32_MAX || !r.amount(old_value) || !r.amount(new_value)) return false;
+            c = {static_cast<std::uint32_t>(id), old_value.raw(), new_value.raw()};
+        }
+    }
     if (p.kind == GovernanceKind::ValidatorAdd && !readValidator(r, p.validator, l)) return false;
     if (p.kind == GovernanceKind::ValidatorRemove && !r.hash(p.remove_key_hash)) return false;
     return r.varint(p.effective_height) && r.varint(p.expiry_height) && r.varint(p.sequence) &&
@@ -283,7 +293,14 @@ Bytes encode(const GovernanceProposal& p) {
     w.varint(p.version);
     w.text(p.network_id);
     w.u8(static_cast<std::uint8_t>(p.kind));
-    if (p.kind == GovernanceKind::FeeChange) w.varint(p.new_min_fee);
+    if (p.kind == GovernanceKind::ParamChange) {
+        w.varint(p.changes.size());
+        for (const auto& c : p.changes) {
+            w.varint(c.id);
+            w.amount(Amount::fromRaw(c.old_value));
+            w.amount(Amount::fromRaw(c.new_value));
+        }
+    }
     if (p.kind == GovernanceKind::ValidatorAdd) {
         const Bytes v = encode(p.validator);
         w.raw(v);

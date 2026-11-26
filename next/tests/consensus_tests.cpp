@@ -719,8 +719,9 @@ void governanceTest() {
     };
 
     // 1. Lapse: one vote of three, expiring soon, never takes effect and its tally is dropped.
-    auto lapse = proposal(GovernanceKind::FeeChange, 1, 0);
-    lapse.new_min_fee = 99;
+    const auto fee_id = static_cast<std::uint32_t>(Param::MinFee);
+    auto lapse = proposal(GovernanceKind::ParamChange, 1, 0);
+    lapse.changes = {{fee_id, 1, 99}};
     lapse.expiry_height = net.reference()->engine().height() + 3;
     vote(lapse, {0});
     run([&] { return net.reached(lapse.expiry_height + 2); }, "lapse window passes");
@@ -728,12 +729,22 @@ void governanceTest() {
             "a proposal without quorum lapses at expiry");
 
     // 2. Fee change with 2 of 3 votes, effective at max(effective height, inclusion + notice).
-    auto fee = proposal(GovernanceKind::FeeChange, 2, 0);
-    fee.new_min_fee = 7;
+    auto fee = proposal(GovernanceKind::ParamChange, 2, 0);
+    fee.changes = {{fee_id, 1, 7}};
     vote(fee, {0, 1});
     const auto h_fee = net.reference()->engine().height();
     run([&] { return all([](const Engine& e) { return e.minFee() == 7; }); }, "fee change takes effect");
     require(net.reference()->engine().height() >= h_fee + o.policy.governance_notice, "fee change waited for notice");
+    require(all([](const Engine& e) {
+        const auto& t = e.parameters();
+        bool switched = false;  // 1 up to some height, then 7 for good
+        for (std::uint64_t h = 1; h <= e.height(); ++h) {
+            const u128 v = t.value(Param::MinFee, h);
+            if (v == 7) switched = true;
+            else if (v != 1 || switched) return false;
+        }
+        return switched && t.changeCount() == 1;
+    }), "one change in every node's parameter history");
     net.requireConsistent("fee");
 
     // 3. Add validator D, with its ready message.

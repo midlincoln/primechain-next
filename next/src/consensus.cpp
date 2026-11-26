@@ -118,12 +118,13 @@ Bytes proposalSigningPayload(const std::string& network_id, const Hash256& set_d
 
 // ---------------------------------------------------------------- construction and durable state
 
-Node::Node(Bytes consensus_public, Bytes consensus_secret, Engine engine, Crypto crypto, Timing timing,
-           Retention retention)
+Node::Node(Bytes consensus_public, Bytes consensus_secret, Engine engine, Crypto crypto, std::optional<Timing> timing,
+           std::optional<Retention> retention)
     : public_(std::move(consensus_public)), secret_(std::move(consensus_secret)), engine_(std::move(engine)),
-      crypto_(std::move(crypto)), timing_(timing), retention_(retention) {
-    if (retention_.window == 0 || retention_.checkpoint_interval == 0)
+      crypto_(std::move(crypto)), timing_override_(timing), retention_override_(retention) {
+    if (retention_override_ && (retention_override_->window == 0 || retention_override_->checkpoint_interval == 0))
         throw std::invalid_argument("retention window and interval must be positive");
+    if (timing_override_ && timing_override_->base_ms == 0) throw std::invalid_argument("timeout base must be positive");
     id_ = {engine_.height() + 1, 0};
     loadInstanceContext();
 }
@@ -151,8 +152,23 @@ Durable Node::durable() const {
     return d;
 }
 
+// D20: timeouts and retention are liveness and storage settings, not validity rules: nodes agree on
+// every block whatever they use. The table holds the network's agreed values; a node follows them
+// for the block being decided unless its operator overrides them locally.
+Timing Node::timing() const {
+    if (timing_override_) return *timing_override_;
+    return {static_cast<std::uint64_t>(engine_.parameter(Param::TimeoutBaseMs)),
+            static_cast<std::uint64_t>(engine_.parameter(Param::TimeoutCapMs))};
+}
+
+Retention Node::retention() const {
+    if (retention_override_) return *retention_override_;
+    return {static_cast<std::uint64_t>(engine_.parameter(Param::CheckpointInterval)),
+            static_cast<std::uint64_t>(engine_.parameter(Param::CertificateWindow))};
+}
+
 Node Node::restore(Bytes consensus_public, Bytes consensus_secret, Engine engine, const Durable& d, Crypto crypto,
-                   Timing timing, Retention retention) {
+                   std::optional<Timing> timing, std::optional<Retention> retention) {
     Node n(std::move(consensus_public), std::move(consensus_secret), std::move(engine), std::move(crypto), timing,
            retention);
     // The store holds every sealed block; decisions inside the open block are replayed from the log.
@@ -194,7 +210,7 @@ void Node::loadInstanceContext() {
     set_digest_ = engine_.validatorSetDigest();
     // A3-3: skip validators with >= M consecutive missed proposer turns; never skip everyone.
     candidates_.clear();
-    const std::uint64_t m = engine_.policy().proposer_skip_after;
+    const u128 m = engine_.parameter(Param::ProposerSkipAfter);  // D20: in force for the instance's block
     for (std::uint32_t i = 0; i < keys_.size(); ++i) {
         const auto it = missed_.find(sha3(keys_[i]));
         if (it == missed_.end() || it->second < m) candidates_.push_back(i);
@@ -287,7 +303,8 @@ void Node::beginInstance(std::uint64_t now, std::vector<Outgoing>& out) {
 }
 
 void Node::schedule(std::uint8_t kind, std::uint64_t round, std::uint64_t now) {
-    const std::uint64_t delay = kind == 3 ? 2 * timing_.base_ms : timing_.timeout(round);
+    const Timing t = timing();
+    const std::uint64_t delay = kind == 3 ? 2 * t.base_ms : t.timeout(round);
     timers_.push_back({now + delay, kind, round});
 }
 
@@ -563,14 +580,14 @@ void Node::buffer(const Message& message, const InstanceId& id, std::uint32_t fr
 
 void Node::requestSync(std::optional<std::uint32_t> to, std::uint64_t now, std::vector<Outgoing>& out) {
     auto& last = last_request_[{to.value_or(UINT32_MAX), id_}];
-    if (last != 0 && now < last + timing_.base_ms) return;
+    if (last != 0 && now < last + timing().base_ms) return;
     last = now + 1;
     out.push_back({to, SyncRequest{id_}});
 }
 
 void Node::serve(std::uint32_t to, const InstanceId& from, std::uint64_t now, std::vector<Outgoing>& out) {
     auto& last = last_serve_[{to, from}];
-    if (last != 0 && now < last + timing_.base_ms) return;
+    if (last != 0 && now < last + timing().base_ms) return;
     last = now + 1;
     std::size_t sent = 0;
     for (auto it = decisions_.lower_bound(from); it != decisions_.end() && sent < kServeBatch; ++it, ++sent)
@@ -720,12 +737,13 @@ bool Node::decide(const Value& value, const Certificate& certificate, std::uint6
 // every K blocks, and for a window of the last W blocks; decisions (values) only for the window.
 void Node::prune() {
     const std::uint64_t tip = engine_.height();
-    const std::uint64_t floor = tip > retention_.window ? tip - retention_.window : 0;
+    const Retention kept = retention();
+    const std::uint64_t floor = tip > kept.window ? tip - kept.window : 0;
     std::erase_if(certificates_, [&](const auto& e) {
         const std::uint64_t h = e.first.h;
         // Both sides of a set change: the last block of the old set and the first block of the new one.
         const bool transition = set_change_heights_.count(h) || (h > 0 && set_change_heights_.count(h - 1));
-        return h <= floor && h % retention_.checkpoint_interval != 0 && !transition &&
+        return h <= floor && h % kept.checkpoint_interval != 0 && !transition &&
                (!previous_id_ || e.first != *previous_id_);
     });
     std::erase_if(decisions_, [&](const auto& e) { return e.first.h <= floor; });
