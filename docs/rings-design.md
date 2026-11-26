@@ -271,8 +271,10 @@ i = 0.
   directly below; the main-chain prime keeps all that reaches it.** So for
   quadratic and cubic rings everything goes to the main-chain prime's holders.
   The total stays 35% at any depth. Rings that are not PIDs, not open, or have
-  not reached q are skipped. A non-Galois ring that sits in a larger ring in
-  several ways counts once per embedding. Holders are those **at the end of the
+  not reached q are skipped. A ring that sits in a larger ring in several ways counts
+  once per embedding, with an equal part each; this also splits a genuine tie between
+  names of the same subring. Links are records that anyone may add later
+  (2026-11-26, `degree-sheets.md`). Holders are those **at the end of the
   block before the entry is paid** (R13; spin-off model, `monetary-layer.md`).
 - **The genesis primes 2 and 3 have no holders (D7), so their 35% goes to the
   validators** (2026-11-25), at most twice per ring. It is shared equally
