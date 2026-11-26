@@ -37,3 +37,7 @@ brute(n,X,mx) = {my(S=List(),c=0); for(k=0,3^n-1, my(d=digits(3^n+k,3)[2..-1]);
 bigcubic(X,cnt) = {my(c=0,a,b,f); while(c<cnt, a=random(2*X^(1/3)\1)-X^(1/3)\1; b=random(X^(1/2)\2); f=x^3+a*x+b;
   if(!polisirreducible(f)||abs(poldisc(f))<X/4||abs(poldisc(f))>4*X, next); f=polredbest(f); my(K=bnfinit(f,1)); if(K.no>1,next);
   if(abs(K.disc)<X/10,next); c++; field(f,0,Str("big",X)))};
+\\ real cubic PIDs (two units) near a size of discriminant
+realcubic(X,cnt) = {my(c=0,a,b,f); while(c<cnt, a=-(random(X^(1/3)\1)+1); b=random(X^(1/2)\2); f=x^3+a*x+b;
+  if(!polisirreducible(f)||poldisc(f)<X/4||poldisc(f)>4*X, next); f=polredbest(f); my(K=bnfinit(f,1)); if(K.no>1,next);
+  if(K.disc<X/10,next); c++; field(f,0,Str("real",X)))};

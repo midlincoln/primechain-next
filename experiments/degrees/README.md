@@ -52,4 +52,19 @@ it shortens with the units. Every result is checked with `degree.py`.
 - Mining cost hardly depends on q: finding is as cheap as checking (as on the main
   chain). Real cubic rings (two units) are not measured yet.
 
-Not covered: real cubic rings at large D, degree 4 and up mining, engine records.
+- Real cubic rings (two units, `realcubic.txt`): every generator found, 6–74 ms per
+  prime; their units and generators stay small (largest unit 190 bits at D ≈ 3·10⁹), so
+  certificates are only 14–48 KB at D ≈ 2–3·10⁹. Complex cubics (one large unit) are the
+  costly case: 0.7–1.3 MB at abs(D) ≈ 9·10⁸.
+
+## Completeness of links (2026-11-26)
+
+`links.gp`: the number of ways a subring F fits into K is the number of roots of F's
+polynomial in K. Each root reduces to a different root mod a prime of K of norm q, so the
+count of roots mod q is an upper bound, and one prime where it equals the listed number
+proves the list complete. Tested: 125 quadratic subrings of 97 quartic rings, 48 subrings
+of 14 sextic rings, 74 subrings of 9 octic rings: always proved, by a prime at most 83.
+Such a prime need not exist in every case (a group can be a union of proper subgroups);
+then another proof would be needed.
+
+Not covered: degree 4 and up mining, engine records.
