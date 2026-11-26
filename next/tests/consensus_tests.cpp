@@ -480,7 +480,7 @@ CrashResult crashRun(std::uint64_t skip_after, std::uint64_t blocks) {
 
 void crashTest() {
     const auto skip = crashRun(3, 60);
-    const auto none = crashRun(1000000, 60);
+    const auto none = crashRun(1000, 60);  // the bound (1,000): never reached in 60 blocks, so no skipping
     require(skip.timeouts < none.timeouts && skip.time < none.time, "proposer skip reduces timeouts and time");
     require(skip.late_timeouts == 0, "once skipped (after M=3 missed turns), the crashed proposer costs no timeouts");
     require(none.late_timeouts > 0, "without skipping, its turns keep costing timeouts");
@@ -738,7 +738,7 @@ void governanceTest() {
     require(all([](const Engine& e) {
         const auto& t = e.parameters();
         bool switched = false;  // 1 up to some height, then 7 for good
-        for (std::uint64_t h = 1; h <= e.height(); ++h) {
+        for (std::uint64_t h = 1; h <= e.height() + 1; ++h) {  // the open block uses the new value
             const u128 v = t.value(Param::MinFee, h);
             if (v == 7) switched = true;
             else if (v != 1 || switched) return false;
