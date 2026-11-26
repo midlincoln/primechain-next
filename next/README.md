@@ -175,6 +175,31 @@ only from block H; replay and restart keep the table and its history).
 skip, timeouts and retention from the table) and the adapted `next_consensus_governance` test;
 also `next_generated_chain`, `next_consensus_chain` and the ASan builds.
 
+## B3.2: ring mathematics (quadratic rings)
+
+`rings.hpp/.cpp`: pure functions, no engine state yet (registry and batches come in B3.4/B3.5).
+
+- Certificate type 1: D, factorization of |D|, generators (q, c0, c1) for every non-inert
+  q <= M_K, and for D > 0 a unit eps != +-1 (norm +-1, need not be fundamental). Checks:
+  eligibility |D| <= F^t, size limits (CertificateBytes, CertificateIntegerBytes),
+  fundamental D, Minkowski coverage, norm, smaller root, no padding.
+- **Roots are not stored:** r = -c0/c1 mod q.
+- **No padding (R10):** a generator is valid only if neither g*eps nor g/eps has a smaller
+  height c0^2 + c1^2. The height is strictly convex along g*eps^k, so this local test picks
+  the minimum (two choices only in a tie). Byte length was not used: it has plateaus, so a
+  few factors of eps could pass unnoticed.
+- Segments (R7, R9): ring ID, start prime, row types (2 bits each, zero padding bits), one
+  (c0, c1) per paid row. The checker recomputes every row type, checks each generator and
+  that the segment ends exactly where R7 says (SegmentPaidRows, SegmentInertRows), and
+  returns the new assets (ring, q, i, e).
+- Ring ID = hash(type, degree, D) (R4). Signed integers: a sign byte (never "negative
+  zero") and the magnitude.
+
+Tests (`ctest -R next_rings`, vectors in `experiments/extensions/quadratic_vectors_v2.txt`
+from `gen_quadratic_vectors_v2.gp`): 351 certificates (342 real with a unit), 992 non-PIDs
+refused, 6,520 corrupted certificates refused; 681 segments with 2,414 rows and 2,342 new
+ring primes; 7,214 corrupted segments and 34,473 malformed encodings refused.
+
 ## Deferred
 
 - **Monetary layer:** reserves, loans, banks.

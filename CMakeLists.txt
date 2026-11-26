@@ -370,6 +370,7 @@ if(PRIMECHAIN_BUILD_NEXT)
         next/src/merkle.cpp
         next/src/model.cpp
         next/src/parameters.cpp
+        next/src/rings.cpp
         next/src/engine.cpp
         next/src/store.cpp
         next/src/consensus.cpp
@@ -389,6 +390,11 @@ if(PRIMECHAIN_BUILD_NEXT)
     add_test(NAME next_parameters COMMAND primechain-next-tests parameters)
     add_test(NAME next_generated_chain COMMAND primechain-next-tests chain 20000)
     set_tests_properties(next_engine_rules next_transfers next_persistence next_parameters next_generated_chain PROPERTIES TIMEOUT 600)
+    add_executable(primechain-next-rings-tests next/tests/rings_tests.cpp)
+    set_target_properties(primechain-next-rings-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    target_link_libraries(primechain-next-rings-tests PRIVATE primechain_next)
+    target_compile_options(primechain-next-rings-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME next_rings COMMAND primechain-next-rings-tests ${CMAKE_CURRENT_SOURCE_DIR}/experiments/extensions/quadratic_vectors_v2.txt)
     add_executable(primechain-next-consensus-tests next/tests/consensus_tests.cpp)
     set_target_properties(primechain-next-consensus-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
     target_link_libraries(primechain-next-consensus-tests PRIVATE primechain_next)
