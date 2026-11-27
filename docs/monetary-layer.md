@@ -435,6 +435,17 @@ post-quantum (ML-DSA).
   in the deposit rules): the bank records each one against the customer's signed
   instruction, so the deposit total stays exact at every block. The notes themselves stay
   unlinkable (blind signatures).
+- **Refresh (agreed 2026-11-27):** a digital note can be copied, so whoever receives one
+  should make the giver's copy worthless. Anyone holding a note can **refresh** it: one
+  transaction with the old note (serial, signature, its one-time key signing the refresh)
+  and a blinded new serial. The validators check the old note, record its serial as
+  spent, and blind-sign the new one (2 of 3, partial signatures); the wallet unblinds it.
+  Same kind and value, no units move, small fee; old and new notes cannot be linked.
+  **The first spend of a serial wins** (redeem or refresh); a later one is rejected.
+  Practice for receivers (not a protocol rule): banks credit a cash deposit, and shops
+  deliver, only after their refresh or redemption is confirmed, so the giver's copy can
+  never win. A bank recirculates deposited notes only after refreshing them. Notes taken
+  offline, with no chance to refresh, are taken on trust.
 - **No limit per bank** on cash held, as in the US; the risk (a broken key) is bounded by
   the total and per-kind limits whoever holds the notes. **Notes a bank holds do not
   count as reserves** (bearer notes cannot be shown to stay put); a bank swaps them for
