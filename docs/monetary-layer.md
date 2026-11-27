@@ -95,6 +95,8 @@ Supersedes an earlier draft with separate "deeds" per prime.
 
 ## Loans (2026-11-23)
 
+**Superseded by "Loans as promissory notes" (2026-11-27) below;** kept for history.
+
 These are transaction types (versioned, D12) on the main ledger. Their state
 is committed by `finance_root`. None is needed for the invited testnet.
 
@@ -299,10 +301,9 @@ checks and customer service stay in client apps.
     liabilities from the reserves, then from the bank's other addresses, and the bank
     loses its status.
   Term deposits that may be lent out until a deadline are an option for later.
-- **Loan register:** `LOAN_OPEN`, `LOAN_REPAY`, `LOAN_WRITE_OFF`, filed by the bank and
-  acknowledged by the borrower's wallet signature. An off-chain borrower appears only as
-  a hash of an identity checked by a licensed attester. Arrears are computed by the chain
-  from the schedule and the repayments, and raise the required reserve.
+- **Loans are promissory notes** (see "Loans as promissory notes" below; this replaces
+  the earlier loan register). Notes a bank holds are its loan book, visible on chain;
+  overdue notes are computed by the chain.
 - **The Fed's view is computed, not reported:** every bank's balance sheet (deposits by
   type, reserves, primes, ring bonds, loans, arrears) follows from the chain at every
   block, a live Call Report. Hidden bad loans are impossible for registered loans; an
@@ -340,6 +341,38 @@ at 0%. A run of 80% of demand deposits in five days needs no Fed help at full re
 deposits costs about 3 points of return. Off-chain consumer loans and the borrower's
 currency risk: `experiments/lending/offchain_loan.py`.
 
+### Loans as promissory notes (agreed 2026-11-27)
+
+**The founder's idea: a loan is a promissory note (veksel), not an entry in an account.**
+An address signs a promise to pay; the note is a signed object that can be held, passed
+on, pledged and paid. Lending tied to accounts (schedules, balances, arrears inside bank
+ledgers) is avoided: the chain records signed promises and payments, which fits
+cryptography, and banks decide prices and whom to trust.
+
+| Transaction | Signed by | Effect |
+|---|---|---|
+| `NOTE_ISSUE` | issuer (the borrower); optionally a guarantor (aval) | "pay A micro-units to the holder at block H": issuer, amount, maturity H, first holder; optional collateral (a `RING_LIEN` naming the note) |
+| `NOTE_ENDORSE` | current holder | passes the note to a new holder, with or without recourse (an endorser "with recourse" pays if the issuer does not) |
+| `NOTE_PAY` | issuer (or anyone paying on the issuer's behalf) | pays the current holder in full; the note is closed. Partial payments lower the amount |
+| (computed) | — | after H unpaid, the note is **overdue** (the old "protest"), visible to all; the holder may claim any collateral and call on endorsers with recourse and guarantors |
+
+- **A loan = a note bought below face value.** The bank pays 1,000,000 for a note of
+  1,060,000 at H; the discount is the interest. No interest rate or schedule in the
+  protocol; instalments are several notes with different maturities.
+- **One instrument for every loan:** consumer loans (unsecured notes), mortgages on rings
+  (note plus lien), interbank loans, and the Fed's lending.
+- **The discount window is literal:** banks sell or pledge eligible notes to the Fed with a
+  haircut (parameter 49). The Fed decides eligibility by vote: for example notes with a
+  ring lien, notes endorsed by a bank, short maturities.
+- **The Fed's view:** the notes each bank holds (its loan book), their maturities and
+  which are overdue, at every block. Overdue notes cannot be hidden.
+- **Credit history without names:** each address's record of paid and overdue notes is
+  public, so a good payer borrows more cheaply even pseudonymously; a new address has no
+  history.
+- **Notes are not money:** they do not count in the supply, and nobody must accept them.
+  An issue fee (as for any transaction) limits spam. Who stands behind an address is the
+  lender's business; the protocol does not ask.
+
 ### Liens on rings (proposed)
 
 The one protocol piece lending needs. A ring record already has a payee and a reserved
@@ -347,7 +380,7 @@ lien field (R6, `rings-design.md`). Proposed ring-record transactions on the mai
 
 | Transaction | Signed by | Effect |
 |---|---|---|
-| `RING_LIEN` | payee and lender | records lender L, amount X, deadline H and the lien type |
+| `RING_LIEN` | payee and lender | records lender L, amount X, deadline H and the lien type; may name a promissory note it secures (then the note's holder is the lender) |
 | `RING_LIEN_REPAY` | payee | pays L what is still owed (in the same transaction) and ends the lien |
 | `RING_LIEN_CLAIM` | lender | valid only after H with X not repaid: L becomes the payee |
 
