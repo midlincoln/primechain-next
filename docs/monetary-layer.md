@@ -207,7 +207,7 @@ checks and customer service stay in client apps.
   |---|---|---|---|
   | **deposit** | from customers | to customers | in = deposit, out = withdrawal |
   | **operations** | loan repayments, FX purchases, income | loan payouts, FX sales, costs | bank's own business |
-  | **reserve** | from the bank's other addresses | back to them, only if the rule below still holds | reserves, locked at the validator |
+  | **reserve account at the Fed** | from the bank | released by the Fed under the rule below | reserves, held by the Fed |
   | **cash** | units backing notes the bank bought | units returned when notes are redeemed | cash vault (cash is a separate design) |
 
   Transfers between one bank's own addresses are internal and change no total.
@@ -223,10 +223,23 @@ checks and customer service stay in client apps.
   bank also lends. A customer checks their own balance through an optional **proof of
   liabilities** published by the bank (off chain: a fingerprint of all balances that adds
   up to the deposit total; each customer verifies only their own entry).
-- **Reserves** are units at the reserve addresses. They are primes, so they keep earning
-  the holder yield. **Rule:** reserves ≥ ρ · deposit total (ρ a parameter, 100% at first:
-  full reserve). A transfer that would break it is invalid. Term deposits that may be
-  lent out until a deadline are an option for later.
+- **Reserves are held by the Fed (decided 2026-11-27).** Each bank has a **reserve
+  account** at its validator: a protocol account with no private key, so no single key
+  can be stolen. Only two things move it: a release to the bank's deposit address that
+  leaves the rule intact (checked by the chain), or a quorum decision of the validators
+  (for example to pay depositors of a failed bank).
+  - **Rule:** reserves ≥ ρ · deposit total (ρ a parameter, 100% at first: full reserve).
+    A deposit must be matched by the bank's transfer to its reserve account within a
+    grace period (a parameter); until then the bank can move nothing else out.
+  - **Withdrawals:** the bank pays from its deposit address; if short, it asks for a
+    release, which the chain allows when the rule still holds after the withdrawal.
+  - **Income on reserves (proposed):** reserves are primes and earn ring income, which the
+    Fed collects. The Fed pays the bank interest on reserves at a voted share of it
+    (100% at first) and keeps the rest: the Fed's own interest-on-reserves lever and a
+    source of validator income.
+  - **Failure:** the Fed already holds the reserves, so it can pay a failed bank's
+    depositors directly, from the bank's proof of liabilities.
+  Term deposits that may be lent out until a deadline are an option for later.
 - **Loan register:** `LOAN_OPEN`, `LOAN_REPAY`, `LOAN_WRITE_OFF`, filed by the bank and
   acknowledged by the borrower's wallet signature. An off-chain borrower appears only as
   a hash of an identity checked by a licensed attester. Arrears are computed by the chain
