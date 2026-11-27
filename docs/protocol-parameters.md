@@ -89,6 +89,13 @@ so far. The rest is designed or planned.
 | 42 | swap fee | to be set | monetary-layer |
 | | **Later (banks, loans)** | | |
 | 43 | membership stock, part paid in, dividend cap, loan limits | 6%, half, to be set | monetary-layer |
+| | **Banks and the Fed (2026-11-27)** | | |
+| 44 | **reserve ratio on demand deposits (ρ), a policy tool** | 100% | monetary-layer |
+| 45 | reserve ratio on term deposits (lendable until their date) | 0% | monetary-layer |
+| 46 | grace period to move a deposit's reserve to the Fed | to be set | monetary-layer |
+| 47 | share of ring income on reserves paid to the bank (interest on reserves) | 100% | monetary-layer |
+| 48 | proof of liabilities interval | 1 epoch | monetary-layer |
+| 49 | Fed lending: discount rate, haircut on ring bonds | to be set | monetary-layer |
 
 The value of a ring prime (17) is a number of its own and does not follow the main
 reward (1) when either is changed. A value of 0 stops ring issuance for new primes.

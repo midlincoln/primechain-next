@@ -238,7 +238,11 @@ checks and customer service stay in client apps.
   can be stolen. Only two things move it: a release to the bank's deposit address that
   leaves the rule intact (checked by the chain), or a quorum decision of the validators
   (for example to pay depositors of a failed bank).
-  - **Rule:** reserves ≥ ρ · deposit total (ρ a parameter, 100% at first: full reserve).
+  - **Rule:** reserves ≥ ρ · demand deposits + ρ_term · term deposits. **The reserve
+    ratio is a policy tool of the Fed** (agreed 2026-11-27; parameters 44 and 45, voted
+    like any parameter): 100% on demand deposits and 0% on term deposits to start, so
+    banks lend only money promised to stay (maturity matching). Lowering ρ later, once
+    the discount window is tested, lets deposits fund more loans.
     A deposit must be matched by the bank's transfer to its reserve account within a
     grace period (a parameter); until then the bank can move nothing else out.
   - **Withdrawals:** the bank pays from its deposit address; if short, it asks for a
