@@ -194,6 +194,45 @@ Proposed: **A at the testnet; B modelled next.** B gives the Fed a second lever 
 set long-term growth, the discount rate sets short-term credit) but changes the supply
 rule (loans outstanding count), so it needs a model before a decision.
 
+### Deposits, reserves and the Fed's view (2026-11-27)
+
+**Proposed: a thin bank layer on chain,** changing "banking is client side only"
+(2026-11-25) to: deposits, reserves and the loan register are on chain; rates, credit
+checks and customer service stay in client apps.
+
+- **A deposit is a chain record,** not a report: the depositor's deposit transaction
+  creates it, so the bank cannot add or drop deposits. Types: **demand** (withdraw any
+  time), **term** (fixed rate, locked until H, can be lent out), **fund share** (a share of
+  the bank's portfolio, no promise).
+- **Reserves** are units locked at the bank's validator. They are primes, so they keep
+  earning the holder yield. **Rule:** reserves ≥ ρ · demand deposits (ρ a parameter, 100%
+  at first: full reserve). A payout that would break it is invalid.
+- **Loan register:** `LOAN_OPEN`, `LOAN_REPAY`, `LOAN_WRITE_OFF`, filed by the bank and
+  acknowledged by the borrower's wallet signature. An off-chain borrower appears only as
+  a hash of an identity checked by a licensed attester. Arrears are computed by the chain
+  from the schedule and the repayments, and raise the required reserve.
+- **The Fed's view is computed, not reported:** every bank's balance sheet (deposits by
+  type, reserves, primes, ring bonds, loans, arrears) follows from the chain at every
+  block, a live Call Report. Hidden bad loans are impossible for registered loans; an
+  unregistered loan makes the bank look poorer. Fake loans to the bank's own addresses
+  remain: borrower acknowledgement, attestation, examination and loss of bank status
+  answer them, as in the US.
+- **Privacy (agreed 2026-11-27):** the Fed sees totals, the depositor sees their own
+  deposit, the bank alone knows names (handed over only where law requires).
+  - Testnet: **level 1,** deposit records public by address, said openly ("test money").
+  - Launch: **level 2,** amounts hidden in commitments; the bank publishes totals with a
+    proof that they add up and no entry is negative; each depositor checks their own
+    entry. Built with the post-quantum cash (the same proof system).
+  - Later: level 3, parties hidden too (the privacy layer).
+
+**Model** (`experiments/lending/deposits.py`): a bank with 600M own units, 400M demand and
+600M term deposits, 300M ring bonds; loans at 12% with 5% defaults; the Fed lends at 5%
+against ring bonds with a 30% haircut. Return on capital is 13% at full reserve and 15%
+at 0%. A run of 80% of demand deposits in five days needs no Fed help at full reserve,
+100M at ρ = 50%, 193M at 20%, and exhausts the discount window at 0%. Paying 5% on term
+deposits costs about 3 points of return. Off-chain consumer loans and the borrower's
+currency risk: `experiments/lending/offchain_loan.py`.
+
 ### Liens on rings (proposed)
 
 The one protocol piece lending needs. A ring record already has a payee and a reserved
