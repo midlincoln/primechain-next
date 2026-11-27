@@ -131,6 +131,91 @@ can favour them, although the spin-off is shared by all holders of those
 primes. This should be watched, but it is not necessarily harmful. Tools if
 needed: same-label loans, and market rates per label.
 
+## Lending: rings are land (2026-11-27)
+
+Supersedes the collateral part of "Loans" above: plain primes are money, so they are not
+the main collateral.
+
+**Why not primes.** A unit of any prime is money worth one micro-unit and can be spent
+directly. Pledging primes to borrow micro-units only makes sense when a prime trades above
+face value; lending up to face value against them carries no risk and serves no purpose.
+Loans are made and repaid in micro-units of any labels; nobody expects the same prime
+back, so same-label loans are dropped.
+
+**Rings are land.** A ring bond (the founder share of a ring, R6) is not spendable money:
+it is an income stream, like a Treasury bond or a field.
+
+| Land | Ring |
+|---|---|
+| discovered and claimed by a settler | discovered by its founder (commit and reveal) |
+| yields a harvest or rent every season, without end | yields ring income with every main-chain prime, without end |
+| the landowner collects the rent | the payee collects the founder share (15%) |
+| tenant farmers do the work and keep most of the harvest | ring miners record the rows and keep 50% |
+| title deed, land registry | the ring record and its payee history |
+| sold by transferring the title | sold by `RING_PAYEE` |
+| mortgage: the owner keeps farming, the bank forecloses on default | lien: the payee keeps the income, the lender takes the ring on default |
+| the government opens new territory | the validators accept new rings (κ, the "algebraic Fed") |
+| land value ≈ rent / interest rate | ring bond value ≈ yearly founder income / rates |
+
+Differences that matter: under rule A4 a new ring does not reduce older rings' income (new
+land does not shrink old fields), though it adds money; the supply of land is set by
+vote, so ring prices partly price Fed policy; the harvest is certain (mathematics), and
+the risk lies in the value of money and the speed of the main chain.
+
+Rough value: with v = 100,000 the founder gets 15,000 micro-units per main-chain prime.
+If the main chain makes N primes a year, the ring pays 15,000 · N a year, and at a 3.5%
+rate it is worth about 29 years of that income.
+
+**Who lends to whom** (rule 1 above, as at the US Fed):
+
+    founder / individual ──ring bond──► bank ──its own ring bonds──► Fed (validators)
+                         ◄─micro-units─       ◄──────micro-units─────
+
+- **Individuals and founders borrow from banks** (mortgages on rings). The bank judges
+  the ring, sets the haircut and the rate, and runs the loan in its client app.
+- **Banks borrow from the Fed** at the discount window, against ring bonds they hold;
+  the Fed lends to member banks only. Banks also lend to each other against ring bonds
+  (the money market, at a rate just below the Fed's).
+- **Base rate:** the holder yield of money (about 3.5% at 10 rings a year, rule A4),
+  since a lender gives up that income. Loan rates are the base rate plus risk.
+  Accepting more rings raises the yield and so the rates, the reverse of a real Fed,
+  because new money reaches holders as income rather than as cheap credit.
+
+**Where the Fed's micro-units come from** (open):
+
+| | A. Fed lends its reserves | B. Fed creates the units |
+|---|---|---|
+| source | paid-in membership stock of its banks | new micro-units, destroyed on repayment |
+| supply | unchanged: money moves | rises while loans are open |
+| like | a credit union | the real Fed |
+| limit | the size of the reserves | haircuts, rate, a voted cap |
+
+Proposed: **A at the testnet; B modelled next.** B gives the Fed a second lever (rings
+set long-term growth, the discount rate sets short-term credit) but changes the supply
+rule (loans outstanding count), so it needs a model before a decision.
+
+### Liens on rings (proposed)
+
+The one protocol piece lending needs. A ring record already has a payee and a reserved
+lien field (R6, `rings-design.md`). Proposed ring-record transactions on the main chain:
+
+| Transaction | Signed by | Effect |
+|---|---|---|
+| `RING_LIEN` | payee and lender | records lender L, amount X, deadline H and the lien type |
+| `RING_LIEN_REPAY` | payee | pays L what is still owed (in the same transaction) and ends the lien |
+| `RING_LIEN_CLAIM` | lender | valid only after H with X not repaid: L becomes the payee |
+
+Lien types:
+
+1. **Mortgage (default):** the payee keeps the founder income; the ring is only locked.
+2. **Income repays (annuity):** from the next block the founder income goes to L until X
+   has reached L, then back to the payee automatically (computed from the rows, R13).
+
+Rules: while a lien is active the payee cannot change without the lender's signature, so a
+pledged ring cannot be sold; one lien per ring at first. Rates, schedules, haircuts and
+loan books stay in client apps; the chain only records the lien. This is a ring record,
+not bank logic, so it fits "banking is client side" (2026-11-25).
+
 ## Cash (exploratory, 2026-11-23; still being thought through)
 
 **Decided (2026-11-25, replaces the class-group decision of 2026-11-24):** cash

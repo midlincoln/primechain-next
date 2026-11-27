@@ -158,8 +158,9 @@ Each ring's registry record carries:
 - **payee:** who currently receives the founder share. It starts as the
   founder and can be changed by a signed assignment;
 - **liens (optional, versioned):** "pay lender L until X units are repaid,
-  then return to the payee", so ring bonds can be pledged (see
-  `monetary-layer.md`);
+  then return to the payee", so ring bonds can be pledged; proposed as
+  `RING_LIEN` with a mortgage type (default) and an annuity type ("Lending: rings
+  are land" in `monetary-layer.md`);
 - **reward schedule:** a type plus parameters (founder share y, decay kind
   and rate, budget), **copied from the validators' current policy when the
   ring is registered and fixed for that ring afterwards**. Validators may

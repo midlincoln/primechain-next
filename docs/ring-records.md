@@ -15,6 +15,7 @@ come first. Rules: `rings-design.md`. Numbers marked * are starting values.
 | `RING_WORK` | message only (journal, D15) | ring miner |
 | Ring batch, ring block | rings file | consensus |
 | `RING_PAYEE` | main block (transaction) | current payee |
+| `RING_LIEN`, `RING_LIEN_REPAY`, `RING_LIEN_CLAIM` (proposed) | main block (transaction) | payee and lender; payee; lender |
 | Payout, claim | **not written: read from the rows** | — |
 
 ## 1. Names
