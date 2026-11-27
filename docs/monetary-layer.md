@@ -196,6 +196,15 @@ rule (loans outstanding count), so it needs a model before a decision.
 
 ### Deposits, reserves and the Fed's view (2026-11-27)
 
+**Principle (the founder, 2026-11-27): the protocol sets the rules for banks; banks build
+their own software.** As with mining clients, we specify what the chain checks (bank
+registration, address roles, the reserve rule, the proof of liabilities, settlement) and
+provide a **reference banking setup** (bank mode of the reference client, a sample
+customer app) as an example only. Customer apps, online banking, interest schemes and
+internal ledgers are each bank's own choice. **On chain, per bank and per proof interval:
+one transaction with a 32-byte fingerprint of the customer balances and their total.**
+The balances themselves never leave the bank.
+
 **Proposed: a thin bank layer on chain,** changing "banking is client side only"
 (2026-11-25) to: deposits, reserves and the loan register are on chain; rates, credit
 checks and customer service stay in client apps.
@@ -212,7 +221,7 @@ checks and customer service stay in client apps.
 
   Transfers between one bank's own addresses are internal and change no total.
   **Deposit total per bank** = everything customers sent to its deposit addresses minus
-  everything sent back, plus interest the bank credits (posted as one total per epoch,
+  everything sent back, plus interest the bank credits (posted as one total per proof interval,
   not per customer). Inflows to operations addresses from outside must name a loan
   number or an FX trade; untagged inflows count as deposits, so a bank cannot hide
   deposits in operations.
@@ -221,7 +230,8 @@ checks and customer service stay in client apps.
   books say whose it is. The bank collects the ring income on everything it holds and
   pays customers what it promised, which can match or beat the holder yield because the
   bank also lends.
-- **Proof of liabilities (agreed 2026-11-27, required):** every epoch the bank publishes
+- **Proof of liabilities (agreed 2026-11-27, required):** every proof interval (parameter
+  48, counted in blocks; not the 100-block epoch) the bank publishes
   a fingerprint of all customer balances, keyed by customer key, that adds up to a total.
   The chain stores the fingerprint and the total; **the total must equal the chain's
   deposit total**, which closes the fake-withdrawal gap (a "withdrawal" to the bank's own
@@ -230,7 +240,7 @@ checks and customer service stay in client apps.
   if the bank fails. A missing proof or a mismatch freezes new deposits and reserve
   releases until fixed.
 - **Interbank settlement:** a payment from a customer of bank A to a customer of bank B
-  is booked by the two banks and settled once per epoch, netted, from A's reserve account
+  is booked by the two banks and settled once per proof interval, netted, from A's reserve account
   to B's (as through Fedwire). The chain sees only "A → B: net amount", which lowers A's
   deposit total and raises B's.
 - **Reserves are held by the Fed (decided 2026-11-27).** Each bank has a **reserve
