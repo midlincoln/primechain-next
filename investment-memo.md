@@ -70,6 +70,36 @@ If the protocol works in practice, Prime Mining could occupy a differentiated po
 
 This matters because investor attention in digital assets often concentrates on projects that are not merely incremental infrastructure, but category-defining protocol ideas. Prime Mining is unusual enough to attract attention from deep-tech capital, crypto-native funds, university-linked labs, and mathematically inclined angel investors if packaged correctly.
 
+## 4A. How PrimeChain Next Compares (added 2026-11-27)
+
+PrimeChain Next extends the original design with rings of number fields and a monetary
+layer (`docs/monetary-layer.md`). Its banking resembles what Ethereum builds with tokens
+and smart contracts, with one design difference and several things no other chain has.
+
+**Fixed rules instead of user programs.** On Ethereum anyone can deploy a program (a smart
+contract); tokens, lending pools and stablecoins are user code. That allows anything
+without permission, but every program is a new attack surface (billions of dollars have
+been lost to contract bugs), every validator runs everyone's code, and nobody is
+responsible for the economy as a whole. PrimeChain builds a small set of banking rules
+into the protocol (bank roles, reserves held by the validators, proofs of liabilities,
+withdrawal claims, liens on rings, later bank-issued tokens) and leaves products and apps
+to the banks. Less can go wrong, validation cost is known in advance, and the system is
+easy for auditors to follow; a new kind of product needs a protocol upgrade.
+
+The closer cousins are **Stellar and the XRP Ledger**: built-in tokens issued by regulated
+"anchors", a built-in exchange, escrow, and no general smart contracts.
+
+| | Ethereum | Stellar / XRP Ledger | PrimeChain Next |
+|---|---|---|---|
+| Where new money comes from | staking rewards, fixed schedule | none or fixed | mathematical work: primes, and primes splitting in rings |
+| Yield for holders | only when staking | none | every holder: ring income when their prime splits |
+| Productive assets that pay forever ("land") | none | none | rings, which can be sold and mortgaged |
+| Monetary policy | none (code only) | none | validators as a rule-based central bank: rings accepted, reserve ratio, interest on reserves, discount rate |
+| Banks | apps anyone writes | anchors, off chain | defined by the protocol, with reserves held by the validators, proofs and claims |
+
+**One line:** banking primitives like Stellar, a built-in central bank no other chain has,
+and money and yield produced by mathematics.
+
 ## 5. Product and Commercialization Path
 
 Prime Mining should not initially be sold as “the next Bitcoin.” That framing is strategically weak and technically invites the wrong comparison. The stronger path is staged:
@@ -287,6 +317,9 @@ That is stronger than saying:
 - or “a mathematically backed cryptocurrency.”
 
 Those framings sound either derivative or vague. Investors need to hear protocol differentiation, not slogan language.
+
+For the monetary layer (section 4A): banking primitives like Stellar, a built-in central
+bank no other chain has, and money and yield produced by mathematics.
 
 ## 18. Conclusion
 
