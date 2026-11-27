@@ -268,6 +268,19 @@ checks and customer service stay in client apps.
   bank's last proof of liabilities, checked against the stored fingerprint. If the bank
   does not pay within N blocks (parameter 50), the Fed pays the customer from the bank's
   reserve account and **the bank's addresses are frozen.**
+  - **What can be claimed:** the claimant's balance in the bank's last proof of
+    liabilities (the claim is signed by that entry's key) **plus deposits sent from the
+    claimant's address to the bank's deposit addresses since that proof** (visible on
+    chain), so a customer who deposited after the last proof is covered too.
+  - **Rebuttal by the bank:** withdrawals paid to the claimant since the proof (on chain,
+    counted automatically), or the customer's own signed instructions since the proof.
+    Every customer instruction (withdraw, pay, transfer) carries a sequence number and the
+    balance after it, signed by the customer; the proof of liabilities records each
+    entry's sequence number, so a newer signed instruction with a lower balance beats an
+    old proof. A rebutted claim is cancelled.
+  - **Against spam:** a claim deposit (parameter 52), refunded when the claim is paid and
+    given to the bank when it is rebutted; a minimum claim amount (parameter 53); one
+    open claim per key.
   - **Freeze triggers:** an unpaid claim past N; a missing or mismatched proof of
     liabilities; reserves below the rule after the grace period.
   - **Frozen means:** nothing leaves the bank's deposit, operations or cash addresses
