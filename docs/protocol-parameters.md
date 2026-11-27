@@ -96,6 +96,8 @@ so far. The rest is designed or planned.
 | 47 | share of ring income on reserves paid to the bank (interest on reserves) | 100% | monetary-layer |
 | 48 | proof interval for banks (fingerprint and total of customer balances), in blocks | 10,000 (to tune on the testnet) | monetary-layer |
 | 49 | Fed lending: discount rate, haircut on ring bonds | to be set | monetary-layer |
+| 50 | blocks a bank has to pay a withdrawal claim before the Fed pays and the bank is frozen | to be set | monetary-layer |
+| 51 | blocks a frozen bank has to fix the cause before wind-down | to be set | monetary-layer |
 
 The value of a ring prime (17) is a number of its own and does not follow the main
 reward (1) when either is changed. A value of 0 stops ring issuance for new primes.

@@ -263,6 +263,23 @@ checks and customer service stay in client apps.
     source of validator income.
   - **Failure:** the Fed already holds the reserves, so it can pay a failed bank's
     depositors directly, from the bank's proof of liabilities.
+- **Withdrawal claim and freeze (agreed 2026-11-27).** A customer whose signed withdrawal
+  is not paid can file a **claim on chain**: the signed request plus their entry in the
+  bank's last proof of liabilities, checked against the stored fingerprint. If the bank
+  does not pay within N blocks (parameter 50), the Fed pays the customer from the bank's
+  reserve account and **the bank's addresses are frozen.**
+  - **Freeze triggers:** an unpaid claim past N; a missing or mismatched proof of
+    liabilities; reserves below the rule after the grace period.
+  - **Frozen means:** nothing leaves the bank's deposit, operations or cash addresses
+    except payments to customers (withdrawals and claims); new deposits to a frozen bank
+    are invalid, so nobody pays into it by mistake; incoming loan repayments are still
+    accepted. The reserve account pays claims only.
+  - **Unfreezing:** automatic once the cause is fixed (claims paid, proof posted, reserves
+    restored), or by a validator quorum.
+  - **Wind-down:** if the cause is not fixed within M blocks (parameter 51), a validator
+    quorum winds the bank down: the Fed pays every customer in the last proof of
+    liabilities from the reserves, then from the bank's other addresses, and the bank
+    loses its status.
   Term deposits that may be lent out until a deadline are an option for later.
 - **Loan register:** `LOAN_OPEN`, `LOAN_REPAY`, `LOAN_WRITE_OFF`, filed by the bank and
   acknowledged by the borrower's wallet signature. An off-chain borrower appears only as
