@@ -351,14 +351,28 @@ cryptography, and banks decide prices and whom to trust.
 
 | Transaction | Signed by | Effect |
 |---|---|---|
-| `NOTE_ISSUE` | issuer (the borrower); optionally a guarantor (aval) | "pay A micro-units to the holder at block H": issuer, amount, maturity H, first holder; optional collateral (a `RING_LIEN` naming the note) |
+| `NOTE_ISSUE` | issuer (the borrower); optionally a guarantor (aval) | a promise to pay the holder on a **schedule** (below): issuer, schedule, first holder; optional collateral (a `RING_LIEN` naming the note) |
 | `NOTE_ENDORSE` | current holder | passes the note to a new holder, with or without recourse (an endorser "with recourse" pays if the issuer does not) |
-| `NOTE_PAY` | issuer (or anyone paying on the issuer's behalf) | pays the current holder in full; the note is closed. Partial payments lower the amount |
-| (computed) | — | after H unpaid, the note is **overdue** (the old "protest"), visible to all; the holder may claim any collateral and call on endorsers with recourse and guarantors |
+| `NOTE_PAY` | issuer (or anyone paying on the issuer's behalf) | pays the current holder what is due; the note closes after its last payment. Paying early or in part is allowed |
+| (computed) | — | a payment unpaid at its height is **overdue** (the old "protest"), visible to all; the holder may claim any collateral and call on endorsers with recourse and guarantors |
 
-- **A loan = a note bought below face value.** The bank pays 1,000,000 for a note of
-  1,060,000 at H; the discount is the interest. No interest rate or schedule in the
-  protocol; instalments are several notes with different maturities.
+**Schedules (the founder, 2026-11-27): notes are not only discount notes.** Three types,
+computed by the chain from the note and chain data, so no outside price feed is needed:
+
+1. **Discount (zero-coupon):** one payment of A at H. Interest is the discount.
+2. **Fixed schedule:** a list of (height, amount): a **coupon bond** (coupons, then the
+   principal), an instalment loan (equal payments), or any fixed plan.
+3. **Floater:** principal P, payment heights, and each payment = P · (index + spread) ·
+   period, with the principal at the end. **The index is one of the protocol's own
+   rates:** the Fed's discount rate (parameter 49) or the holder yield measured on chain
+   over the last N blocks. A floater issued today pays more if the Fed raises rates.
+
+Endorsing passes all remaining payments. Splitting coupons from principal (stripping),
+calls and conversions can be added as types later.
+
+- **A loan = buying a note.** For a discount note the bank pays 1,000,000 for 1,060,000
+  at H; for a coupon note or a floater it pays about face value and collects the coupons.
+  Prices and rates are the market's; the protocol only computes what is due and when.
 - **One instrument for every loan:** consumer loans (unsecured notes), mortgages on rings
   (note plus lien), interbank loans, and the Fed's lending.
 - **The discount window is literal:** banks sell or pledge eligible notes to the Fed with a
