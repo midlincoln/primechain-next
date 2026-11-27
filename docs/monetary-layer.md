@@ -676,6 +676,43 @@ The model follows real currency.
   physical cash (paper QR notes with online swap, or secure-hardware cards)
   is a separate project.
 
+## Crypto-security insurance (direction for later, 2026-11-27)
+
+**The founder's idea: insurance tied to cryptographic security.** An insurance policy is a
+loan backwards: the policyholder pays first (the premium) and the insurer pays later, only
+if an event happens. Here the event is **a piece of cryptography breaking,** recorded on
+chain, and the contract then pays by itself.
+
+- **Conditional note:** "pay A to the holder if a break of X is proved before block H",
+  issued by the insurer; the premium is the price, paid in the same transaction. After H
+  the note expires and the premium stays with the insurer.
+- **Breaks with a proof the chain checks itself** (a witness, like a prime certificate):
+
+  | What breaks | Witness | Check |
+  |---|---|---|
+  | an RSA key (a cash kind) | the two prime factors of its modulus N | p · q = N |
+  | a hash function (SHA3) | two different inputs with the same hash | hash both |
+  | a ceremony's result | its secret (for an isogeny ceremony, the walk or the endomorphism ring of the final curve) | recompute the public parameter |
+  | a signature scheme (ML-DSA) | a valid signature under a **canary key** (made by a ceremony, so nobody has its secret key) on a challenge message | verify the signature |
+
+- **Breaks without a checkable proof** (a stolen key, a software flaw) are recorded by a
+  validator vote, as for the cash freeze; such policies name that condition.
+- **When a break is proved,** in the same block: every policy on X pays its holder; **the
+  finder receives a bounty** (a share of the payouts), so publishing a break pays better
+  than using it in secret; and the protective rules fire (a broken cash kind freezes).
+- **Fully collateralized:** a break hits every policy on X at once, so spreading risk does
+  not work. The insurer locks the whole payout when issuing; the premium is its return.
+  No insurer can then fail to pay.
+- **A price for crypto risk:** the premium for "RSA-3072 broken within N blocks" is the
+  market's estimate of that risk, a signal for the Fed when to move cash from RSA to the
+  post-quantum version; likewise for ML-DSA and SHA3.
+- **Protocol needs:** one more note type with conditions from a fixed list (factorization
+  of a named modulus, hash collision, ceremony secret, canary signature, recorded by
+  validators), the payout locked at issue, and a bounty share. No contracts.
+
+**Deposit insurance** (banks paying premiums into a fund that pays depositors of a failed
+bank) is a separate topic, open; it would make low reserve ratios safer.
+
 ## Banks: membership and evolution (2026-11-24)
 
 Decided: **mimic the Federal Reserve as closely as possible.**

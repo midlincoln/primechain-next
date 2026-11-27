@@ -36,6 +36,13 @@ walk.
 
 Trusted curves over F_p, public randomness, setups of other proof systems.
 
+## Insurance against breaks (direction for later)
+
+Ceremonies can also make **canary keys** (public keys whose secret nobody has) and public
+parameters whose secret, if ever found, is a checkable witness of a break. Insurance
+policies can pay out on such witnesses ("Crypto-security insurance" in
+`monetary-layer.md`).
+
 ## Status
 
 `experiments/ceremony/`: a toy ceremony on small primes (proofs of 80–128 bytes; forged and
