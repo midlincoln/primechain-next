@@ -220,6 +220,7 @@ checks and customer service stay in client apps.
   | **operations** | loan repayments, FX purchases, income | loan payouts, FX sales, costs | bank's own business |
   | **reserve account at the Fed** | from the bank | released by the Fed under the rule below | reserves, held by the Fed |
   | **cash** | units backing notes the bank bought | units returned when notes are redeemed | cash vault (cash is a separate design) |
+  | **notes** (loan book) | promissory notes the bank buys or is endorsed | notes it endorses on (sold, or pledged to the Fed) | the bank's loans; payments on them go to its operations address, named by note ID |
 
   Transfers between one bank's own addresses are internal and change no total.
   **Deposit total per bank** = everything customers sent to its deposit addresses minus
