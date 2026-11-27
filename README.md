@@ -1,119 +1,89 @@
 # PrimeChain Next
 
-PrimeChain Next is the repository for the next PrimeChain protocol experiment.
+PrimeChain Next is the successor design to the PrimeChain testnet
+([midlincoln/primechain](https://github.com/midlincoln/primechain), still running).
+It is in development: the mathematics and the core engine are taking shape, the economic
+design is being discussed, and nothing here is deployed.
 
-The current live testnet remains in the original repository:
+**In one paragraph.** Miners prove that integers are prime or composite, as in v1, but
+the chain is compact: **one block per prime**, closing all the composite ranges found
+since the previous prime. On top of the main chain, miners can open **rings of integers
+of number fields** (quadratic first) once they certify, unconditionally, that the ring
+is a principal ideal domain (Minkowski bound). Each opened ring records how every
+main-chain prime factors in it, and those splits issue new money to the ring's miners,
+the holders of the prime, and the ring's founder. A **monetary layer** turns this into an
+economy: ring bonds, banks with reserves held by the validators, and a rule-based
+"algebraic Fed" whose main lever is how many new rings it accepts.
 
-```text
-https://github.com/midlincoln/primechain
-```
+## Where things stand
 
-This repository starts from that codebase, but it is not the live chain. It is where we will design and test a cleaner protocol before deciding whether to launch a new chain.
+| Part | Status |
+|---|---|
+| Main chain: one block per prime, atomic composite ranges, Pratt-checked closing primes, replay | engine built and tested (`next/`) |
+| Consensus: two-phase rounds, certificates, equivocation evidence, restart | core built and tested in simulation; networking next |
+| Protocol parameters: every number in one voted, versioned table | built (B3.1) |
+| Rings: certificates, ring math, segments, encodings (quadratic) | built (B3.2), checked against PARI/GP vectors |
+| Rings on chain: awards, opening, mining, consensus | designed; steps B3.3–B3.7 next |
+| Higher degrees (cubic and up) | designed and tested in experiments; later upgrades |
+| Monetary layer: issuance, lending, banks, the Fed | being designed now; changes often |
+| Cash, privacy, ceremonies | directions agreed; later |
+| Invited testnet next to v1 | after the steps above |
 
-## Why A New Repository
+## Start here
 
-The current testnet has been useful because it exposed real protocol and operational issues:
+**Design** (in `docs/`):
 
-- one-integer-per-record admission is too slow;
-- validator coordination dominates arithmetic work;
-- composite lottery added fragility and was removed;
-- validator admission, removal, reserve lock/unlock, and reward distribution needed live fixes;
-- replay and sync rules became harder to reason about after several testnet patches;
-- integer representation and evidence format need to be revisited for larger future ranges.
+| Read | For |
+|---|---|
+| [next-plan.md](docs/next-plan.md) | the plan, the two tracks and the milestones |
+| [main-chain-design.md](docs/main-chain-design.md) | main chain decisions D1–D20 and consensus (A3) |
+| [extension-certificates.md](docs/extension-certificates.md) | how a ring is certified (Minkowski bound, class group) |
+| [rings-design.md](docs/rings-design.md), [ring-records.md](docs/ring-records.md) | rings R1–R13: opening, mining, rewards, records |
+| [degree-sheets.md](docs/degree-sheets.md) | what each new degree needs (cubic, quartic, …) |
+| [protocol-parameters.md](docs/protocol-parameters.md) | every protocol number, its starting value and the rules for changing it |
+| [b3-plan.md](docs/b3-plan.md) | the steps that put rings on chain |
+| [monetary-layer.md](docs/monetary-layer.md) | money, issuance, lending ("rings are land"), banks, reserves, the Fed, cash |
+| [validator-policy.md](docs/validator-policy.md) | who runs validators, now and later |
+| [ceremonies.md](docs/ceremonies.md) | trusted-setup ceremonies hosted by the chain (planned) |
 
-PrimeChain Next lets us work on these changes without risking the running testnet.
+**Code:** [`next/`](next/README.md) is the engine (C++17, GMP, OpenSSL; MIT). Build with
+CMake from the repository root and run `ctest -R '^next_'`. `next/README.md` lists the
+modules and what each test covers. The rest of `src/`, `include/` and `tests/` is
+inherited v1 code, kept for reference and for porting.
 
-## Operating Plan
+**Experiments** (`experiments/`, Python and PARI/GP, not engine code):
 
-We intend to keep the existing testnet alive while developing this repository in parallel.
+| Folder | What it checks |
+|---|---|
+| `extensions/` | certificate generator and test vectors used by the engine tests |
+| `degrees/` | certificates and mining for degrees 3–7; subrings and links |
+| `nested_rings/` | ring awards computed from rows; spends across a split |
+| `ring_issuance/`, `fed_rings/` | issuance rules, money supply and holder yield by rings accepted |
+| `cash_cycle/` | the cash note cycle |
+| `ceremony/` | a toy isogeny ceremony on small primes |
+| `prime_blocks/` | early size, replay and coordination experiments |
 
-The same physical validator servers may be reused for experiments, but PrimeChain Next services should run on separate ports and separate data directories. The old chain and the new-chain experiments must not share chain data, wallets, peer state, or service units.
+**Settled and moving.** The mathematics (certificates, ring math, test vectors) and the
+main-chain engine are the settled part and the best place to review. The monetary
+documents change almost daily.
 
-Planned separation (checked against listeners on the three active hosts on
-2026-11-15; Next ports are not reserved or opened yet):
+## Reviewing and contributing
 
-```text
-current testnet:
-  public/status/mining: 8339
-  validator peer:       8340
-  record sync:          8341
+Reviews and corrections are welcome, especially independent checks of the certificate
+rules and the test vectors (for example with your own PARI/GP or Sage). Please open an
+issue or a pull request from your fork. `next/` is MIT-licensed; the license for the
+documents and experiments is not chosen yet, so please ask before contributing there.
 
-PrimeChain Next experiments:
-  public/status/mining: 9339
-  validator peer:       9340
-  record sync:          9341
-```
+## Relation to the v1 testnet
 
-See [dual-chain deployment notes](docs/dual-chain-deployment.md) for host checks,
-firewall prerequisites, isolated paths, and pre-launch safety checks. Recheck
-availability before deployment; no Next service is deployed by this plan.
+The v1 testnet keeps running while Next is developed. Next uses separate ports
+(9339–9341 instead of 8339–8341), data directories and services, and shares no chain
+data, wallets or keys with v1; see
+[dual-chain-deployment.md](docs/dual-chain-deployment.md). If Next becomes the public
+chain, v1 holder balances are meant to carry over through a published snapshot or swap;
+the details (height, eligible balances, reserves, procedure) will be published before
+any migration.
 
-## Design Goals
-
-PrimeChain Next is focused on reducing protocol bureaucracy while preserving deterministic replay and finality.
-
-Primary goals:
-
-- store one finalized prime-ended block with all intervening composite evidence
-  and credited miner addresses;
-- accept contiguous composite ranges atomically, verifying every member but
-  voting once per range, with durable range receipts and voting locks;
-- limit range size through shared policy, fixed during an open prime block;
-- preserve per-composite reward shares and use a block-level certificate before
-  pruning intermediate range signatures;
-- support larger integers with bounded canonical encodings and checked arithmetic;
-- keep proofs searchable and replay deterministic;
-- preserve validator admission/removal, transaction, fee, reserve, and reward-share
-  behavior unless a specific adaptation is reviewed;
-- measure validator coordination before optimizing it.
-
-An issuance multiplier is a separate economic decision. Polynomial mining and
-broader evidence work remain research plans, not requirements for this launch.
-
-## Current Chain Migration Principle
-
-If PrimeChain Next becomes a new public testnet or main successor chain, we intend to preserve current-chain holder balances through a transparent snapshot or swap process.
-
-Details are not finalized. Before any migration, we should define and publish:
-
-- snapshot height;
-- eligible balances;
-- treatment of validator reserves;
-- treatment of undistributed reward pools;
-- claim or swap procedure;
-- deadline, if any;
-- verification tools.
-
-The goal is continuity for current miners and holders, not abandoning the existing testnet.
-
-## Initial Work Items
-
-Start with the [prime-block design](docs/prime-block-design.md) and the
-[offline size/replay experiment](experiments/prime_blocks/README.md).
-The experiment is opt-in and does not change node or network behavior.
-
-An [atomic range/recovery prototype](experiments/prime_blocks/atomic-ranges.md)
-adds a configurable range policy, durable range and closing-block vote locks,
-and an isolated message interface tested over localhost TCP. A separate
-[continuous-chain experiment](experiments/prime_blocks/continuous-chain.md)
-installs successive prime blocks and recovers interrupted interval transitions.
-A [three-process localhost test](experiments/prime_blocks/local-validators.md)
-connects that coordinator to messages and exercises restart, catch-up, and lost
-replies with independent workers. An [autonomous peer test](experiments/prime_blocks/peer-coordination.md)
-adds miner-to-one-validator submissions, peer quorum collection, and durable
-sender-driven delivery/recovery. It remains a bounded, fixed-set, single-round
-localhost experiment. None changes the live node. Subsequent
-milestones cover larger integer encoding, round-change recovery, production
-checkpoint safety, policy voting, and full validator-network integration.
-Network identity/deployment separation
-and a reviewed migration/snapshot policy are required before any public launch.
-
-The [proposal/recovery design](docs/proposal-recovery-design.md) records the next
-decision: trusted crash-fault consensus or a Byzantine-tolerant configuration.
-Offline conflict tests reproduce split locks and conflicting certificates with
-one equivocating signer under the current two-of-three rule. These are known
-boundary counterexamples, not a completed recovery implementation.
-
-## Status
-
-This repository is experimental. Do not use it to run the current live testnet.
+Earlier background: [prime-block-design.md](docs/prime-block-design.md),
+[v1-lessons.md](docs/v1-lessons.md), [v1-baseline-measurements.md](docs/v1-baseline-measurements.md),
+and the [whitepaper](prime-mining-whitepaper.md).
