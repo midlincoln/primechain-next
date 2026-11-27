@@ -200,13 +200,33 @@ rule (loans outstanding count), so it needs a model before a decision.
 (2026-11-25) to: deposits, reserves and the loan register are on chain; rates, credit
 checks and customer service stay in client apps.
 
-- **A deposit is a chain record,** not a report: the depositor's deposit transaction
-  creates it, so the bank cannot add or drop deposits. Types: **demand** (withdraw any
-  time), **term** (fixed rate, locked until H, can be lent out), **fund share** (a share of
-  the bank's portfolio, no promise).
-- **Reserves** are units locked at the bank's validator. They are primes, so they keep
-  earning the holder yield. **Rule:** reserves ≥ ρ · demand deposits (ρ a parameter, 100%
-  at first: full reserve). A payout that would break it is invalid.
+- **Bank addresses by role (2026-11-27, the founder's design).** A bank registers its
+  addresses at its validator, each with one role:
+
+  | Role | In | Out | Counts as |
+  |---|---|---|---|
+  | **deposit** | from customers | to customers | in = deposit, out = withdrawal |
+  | **operations** | loan repayments, FX purchases, income | loan payouts, FX sales, costs | bank's own business |
+  | **reserve** | from the bank's other addresses | back to them, only if the rule below still holds | reserves, locked at the validator |
+  | **cash** | units backing notes the bank bought | units returned when notes are redeemed | cash vault (cash is a separate design) |
+
+  Transfers between one bank's own addresses are internal and change no total.
+  **Deposit total per bank** = everything customers sent to its deposit addresses minus
+  everything sent back, plus interest the bank credits (posted as one total per epoch,
+  not per customer). Inflows to operations addresses from outside must name a loan
+  number or an FX trade; untagged inflows count as deposits, so a bank cannot hide
+  deposits in operations.
+- **Privacy this gives:** the chain sees a customer's deposit and withdrawal (address and
+  amount). In between the money is mixed with all the bank's money, and only the bank's
+  books say whose it is. The bank collects the ring income on everything it holds and
+  pays customers what it promised, which can match or beat the holder yield because the
+  bank also lends. A customer checks their own balance through an optional **proof of
+  liabilities** published by the bank (off chain: a fingerprint of all balances that adds
+  up to the deposit total; each customer verifies only their own entry).
+- **Reserves** are units at the reserve addresses. They are primes, so they keep earning
+  the holder yield. **Rule:** reserves ≥ ρ · deposit total (ρ a parameter, 100% at first:
+  full reserve). A transfer that would break it is invalid. Term deposits that may be
+  lent out until a deadline are an option for later.
 - **Loan register:** `LOAN_OPEN`, `LOAN_REPAY`, `LOAN_WRITE_OFF`, filed by the bank and
   acknowledged by the borrower's wallet signature. An off-chain borrower appears only as
   a hash of an identity checked by a licensed attester. Arrears are computed by the chain
@@ -217,13 +237,11 @@ checks and customer service stay in client apps.
   unregistered loan makes the bank look poorer. Fake loans to the bank's own addresses
   remain: borrower acknowledgement, attestation, examination and loss of bank status
   answer them, as in the US.
-- **Privacy (agreed 2026-11-27):** the Fed sees totals, the depositor sees their own
-  deposit, the bank alone knows names (handed over only where law requires).
-  - Testnet: **level 1,** deposit records public by address, said openly ("test money").
-  - Launch: **level 2,** amounts hidden in commitments; the bank publishes totals with a
-    proof that they add up and no entry is negative; each depositor checks their own
-    entry. Built with the post-quantum cash (the same proof system).
-  - Later: level 3, parties hidden too (the privacy layer).
+- **Privacy (agreed 2026-11-27):** the Fed sees totals per bank, the depositor sees their
+  own balance, the bank alone knows names (handed over only where law requires). The
+  role addresses above give this without new cryptography; this replaces the earlier
+  plan of hidden amounts with proofs. A shielded pool (hidden parties and amounts, with
+  ring income paid to the pool's public totals) stays a later option. Cash is separate.
 
 **Two kinds of depositors (agreed 2026-11-27):**
 
