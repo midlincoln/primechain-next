@@ -383,6 +383,21 @@ calls and conversions can be added as types later.
 - **Credit history without names:** each address's record of paid and overdue notes is
   public, so a good payer borrows more cheaply even pseudonymously; a new address has no
   history.
+- **Who may use notes (agreed 2026-11-27): anyone** may issue, hold and endorse notes
+  (a miner, a shop, a ring founder; person-to-person lending). **Banks** are the main
+  buyers and guarantors (a bank co-signing a note makes it as good as the bank: a
+  banker's acceptance, for a fee). **Only banks can take notes to the Fed,** and the Fed
+  decides which notes are eligible (for example guaranteed by a bank or secured by a
+  ring lien). Lending outside banks, "shadow banking" in the US, is fully visible here.
+- **Where notes live:** note actions are transactions in main-chain blocks; open notes
+  form a table in the state (issuer, holder, schedule, paid so far, next payment due),
+  committed by `finance_root` in every header; overdue status is computed from the
+  table and the height; fully paid notes leave the table, and their history in old
+  blocks is the issuer's credit record.
+- **Cryptography:** the chain's own ML-DSA-65 signatures and SHA3-256 hashes; no issuing
+  key, no blind signatures, no contracts. Signatures can be pruned after finality (D15).
+  Later, with the STARK proofs of the post-quantum cash: portable credit history across
+  addresses, hidden amounts on consumer notes, identity attestation without names.
 - **Notes are not money:** they do not count in the supply, and nobody must accept them.
   An issue fee (as for any transaction) limits spam. Who stands behind an address is the
   lender's business; the protocol does not ask.
