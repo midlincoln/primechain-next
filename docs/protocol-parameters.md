@@ -81,12 +81,12 @@ so far. The rest is designed or planned.
 | 35 | ring batch size, at most | 256 KB | ring-records |
 | 36 | pause of one ring / all rings | off | R2 |
 | | **Cash (closed at launch)** | | |
-| 37 | total cash limit | 0 | monetary-layer |
-| 38 | limit per kind (tranche) | 0 | monetary-layer |
-| 39 | denominations | to be set | monetary-layer |
+| 37 | total cash limit | 0 (at most 5% of supply when cash opens, proposed) | monetary-layer |
+| 38 | limit per kind (tranche) | 0 (at most 1% of supply when cash opens, proposed) | monetary-layer |
+| 39 | denominations | 1,000 / 10,000 / 100,000 / 1,000,000 micro-units | monetary-layer |
 | 40 | RSA key size, at least | 3,072 bits | monetary-layer |
 | 41 | note exchange deadline; freeze deadline | to be set | monetary-layer |
-| 42 | swap fee | to be set | monetary-layer |
+| 42 | swap fee (paid separately in units) | to be set | monetary-layer |
 | | **Later (banks, loans)** | | |
 | 43 | membership stock, part paid in, dividend cap, loan limits | 6%, half, to be set | monetary-layer |
 | | **Banks and the Fed (2026-11-27)** | | |

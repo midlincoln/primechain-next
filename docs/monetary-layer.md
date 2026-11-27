@@ -230,6 +230,11 @@ checks and customer service stay in client apps.
   books say whose it is. The bank collects the ring income on everything it holds and
   pays customers what it promised, which can match or beat the holder yield because the
   bank also lends.
+- **Every withdrawal is on chain (the founder, 2026-11-27),** whole or partial, whether
+  paid to an address or in cash: a withdrawal to an address is the transfer itself; a
+  cash withdrawal is a record by the bank with the amount and the hash of the customer's
+  signed instruction. Cash deposits are recorded the same way. The deposit total is
+  therefore exact at every block, not only at each proof.
 - **Proof of liabilities (agreed 2026-11-27, required):** every proof interval (parameter
   48, counted in blocks; not the 100-block epoch) the bank publishes
   a fingerprint of all customer balances, keyed by customer key, that adds up to a total.
@@ -399,7 +404,7 @@ post-quantum (ML-DSA).
 **Starting rules (2026-11-25; they replace the matching points below):**
 
 1. Notes are unlabeled and 100% backed by units in an on-chain vault.
-2. Any address may buy cash; a list of approved banks may be added later.
+2. **Only banks buy notes from the vault; anyone redeems** (changed 2026-11-27).
 3. Par both ways. Vault income (spin-offs) is seigniorage; backing is untouchable.
 4. Anyone exchanges cash back directly on chain. Units with the fewest pending
    payouts leave the vault first ("oldest first", random and pro rata let a
@@ -419,7 +424,31 @@ post-quantum (ML-DSA).
    at par. Forged and honest notes cannot be told apart, so holders of that kind
    share the loss; no other kind is touched.
 
-Open: the size of the tranches and of the total limit, how a freeze is triggered
+**Cash and the bank rules (2026-11-27):**
+
+- **Vaults are keyless Fed accounts,** one per kind (series and denomination), like the
+  reserve accounts; a frozen kind touches only its own vault. Ring income on the backing
+  (seigniorage) goes to the Fed, as with reserves.
+- **Banks buy notes** from their cash address and get units back there when they swap
+  notes in. **Anyone can redeem** a note on chain directly; redemption cannot be blocked.
+- **Withdrawals and deposits in cash are on chain** (see "every withdrawal is on chain"
+  in the deposit rules): the bank records each one against the customer's signed
+  instruction, so the deposit total stays exact at every block. The notes themselves stay
+  unlinkable (blind signatures).
+- **No limit per bank** on cash held, as in the US; the risk (a broken key) is bounded by
+  the total and per-kind limits whoever holds the notes. **Notes a bank holds do not
+  count as reserves** (bearer notes cannot be shown to stay put); a bank swaps them for
+  units to add reserves. Counting vault cash can come later.
+- **No reporting of customers' cash** in the protocol; a bank whose country requires it
+  does so in its own software.
+- **Starting values (parameters, to be voted):** denominations 1,000 / 10,000 / 100,000 /
+  1,000,000 micro-units; swap fee paid separately in units so notes stay round; each kind
+  at most 1% of supply and all cash at most 5% when cash opens; backing of expired notes
+  goes to the Fed treasury.
+- **RSA keys:** at the testnet one party generates and splits the keys, said openly; later
+  a key ceremony on chain (`ceremonies.md`).
+
+Open: how a freeze is triggered and voted, how a freeze is triggered
 and voted, swap fees (a unit fee breaks round notes into change), denominations,
 backing of expired notes (treasury proposed), distributed key generation, and a
 ring founder exchanging barren primes before opening a ring (costs seigniorage
