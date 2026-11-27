@@ -220,9 +220,19 @@ checks and customer service stay in client apps.
   amount). In between the money is mixed with all the bank's money, and only the bank's
   books say whose it is. The bank collects the ring income on everything it holds and
   pays customers what it promised, which can match or beat the holder yield because the
-  bank also lends. A customer checks their own balance through an optional **proof of
-  liabilities** published by the bank (off chain: a fingerprint of all balances that adds
-  up to the deposit total; each customer verifies only their own entry).
+  bank also lends.
+- **Proof of liabilities (agreed 2026-11-27, required):** every epoch the bank publishes
+  a fingerprint of all customer balances, keyed by customer key, that adds up to a total.
+  The chain stores the fingerprint and the total; **the total must equal the chain's
+  deposit total**, which closes the fake-withdrawal gap (a "withdrawal" to the bank's own
+  address lowers the chain total but not what customers are owed). Each customer's app
+  checks only its own entry. The full list stays with the bank and goes to the Fed only
+  if the bank fails. A missing proof or a mismatch freezes new deposits and reserve
+  releases until fixed.
+- **Interbank settlement:** a payment from a customer of bank A to a customer of bank B
+  is booked by the two banks and settled once per epoch, netted, from A's reserve account
+  to B's (as through Fedwire). The chain sees only "A → B: net amount", which lowers A's
+  deposit total and raises B's.
 - **Reserves are held by the Fed (decided 2026-11-27).** Each bank has a **reserve
   account** at its validator: a protocol account with no private key, so no single key
   can be stolen. Only two things move it: a release to the bank's deposit address that
@@ -251,7 +261,9 @@ checks and customer service stay in client apps.
   remain: borrower acknowledgement, attestation, examination and loss of bank status
   answer them, as in the US.
 - **Privacy (agreed 2026-11-27):** the Fed sees totals per bank, the depositor sees their
-  own balance, the bank alone knows names (handed over only where law requires). The
+  own balance. **Names are not required by the protocol** (decided 2026-11-27): an account
+can be just a key; a bank collects names only if its services or its country require
+it (unsecured loans, dollar desks). The
   role addresses above give this without new cryptography; this replaces the earlier
   plan of hidden amounts with proofs. A shielded pool (hidden parties and amounts, with
   ring income paid to the pool's public totals) stays a later option. Cash is separate.
