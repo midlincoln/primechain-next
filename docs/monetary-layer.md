@@ -225,6 +225,21 @@ checks and customer service stay in client apps.
     entry. Built with the post-quantum cash (the same proof system).
   - Later: level 3, parties hidden too (the privacy layer).
 
+**Two kinds of depositors (agreed 2026-11-27):**
+
+1. **On-chain depositors** (for example a miner) deposit micro-units. The chain sees the
+   deposit transfer, then only the bank's own activity. Hiding the entry as well is a job
+   for the privacy layer.
+2. **Off-chain depositors** bring dollars, bitcoin or USDT; the customer never appears on
+   chain. Order:
+   - **Testnet:** the bank converts at its **FX desk** (sells micro-units from its own
+     stock at its quoted price) and records a micro-unit deposit. No protocol change.
+   - **Next:** **bank-issued tokens** (for example "Bank X USD", "Bank X BTC"), backed 1:1:
+     a new asset type on the ledger, with proof of backing (BTC from the bank's public
+     bitcoin addresses, dollars by attestation). Micro-units and tokens can then be
+     exchanged on chain, with banks as market makers.
+   - **Later:** direct cross-chain swaps (hash and time locks on both chains).
+
 **Model** (`experiments/lending/deposits.py`): a bank with 600M own units, 400M demand and
 600M term deposits, 300M ring bonds; loans at 12% with 5% defaults; the Fed lends at 5%
 against ring bonds with a 30% haircut. Return on capital is 13% at full reserve and 15%
