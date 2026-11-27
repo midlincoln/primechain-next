@@ -220,7 +220,6 @@ checks and customer service stay in client apps.
   | **operations** | loan repayments, FX purchases, income | loan payouts, FX sales, costs | bank's own business |
   | **reserve account at the Fed** | from the bank | released by the Fed under the rule below | reserves, held by the Fed |
   | **cash** | units backing notes the bank bought | units returned when notes are redeemed | cash vault (cash is a separate design) |
-  | **notes** (loan book) | promissory notes the bank buys or is endorsed | notes it endorses on (sold, or pledged to the Fed) | the bank's loans; payments on them go to its operations address, named by note ID |
 
   Transfers between one bank's own addresses are internal and change no total.
   **Deposit total per bank** = everything customers sent to its deposit addresses minus
@@ -352,8 +351,9 @@ cryptography, and banks decide prices and whom to trust.
 
 | Transaction | Signed by | Effect |
 |---|---|---|
-| `NOTE_ISSUE` | issuer (the borrower); optionally a guarantor (aval) | a promise to pay the holder on a **schedule** (below): issuer, schedule, first holder; optional collateral (a `RING_LIEN` naming the note) |
-| `NOTE_ENDORSE` | current holder | passes the note to a new holder, with or without recourse (an endorser "with recourse" pays if the issuer does not) |
+| `NOTE_ISSUE` | issuer (the borrower); optionally a guarantor (aval); the first holder if a price is paid | a promise to pay the holder on a **schedule** (below): issuer, schedule, first holder; optional collateral (a `RING_LIEN` naming the note); **optional price,** paid by the first holder to the issuer in the same transaction |
+| `NOTE_ENDORSE` | current holder; the buyer if a price is paid | passes the note to a new holder, with or without recourse (an endorser "with recourse" pays if the issuer does not); **optional price,** paid by the new holder in the same transaction |
+| `NOTE_LIEN` | holder and lender | pledges a note: the holder keeps it, but it passes to the lender if the secured debt is not repaid by its deadline (used for the Fed's discount window) |
 | `NOTE_PAY` | issuer (or anyone paying on the issuer's behalf) | pays the current holder what is due; the note closes after its last payment. Paying early or in part is allowed |
 | (computed) | — | a payment unpaid at its height is **overdue** (the old "protest"), visible to all; the holder may claim any collateral and call on endorsers with recourse and guarantors |
 
@@ -379,8 +379,13 @@ calls and conversions can be added as types later.
 - **The discount window is literal:** banks sell or pledge eligible notes to the Fed with a
   haircut (parameter 49). The Fed decides eligibility by vote: for example notes with a
   ring lien, notes endorsed by a bank, short maturities.
-- **The Fed's view:** the notes each bank holds (its loan book), their maturities and
-  which are overdue, at every block. Overdue notes cannot be hidden.
+- **A bank's loan book is computed, not kept:** all open notes held by any of the
+  bank's registered addresses, however they arrived (issued to the bank when someone
+  borrowed, bought from another holder, or endorsed to it). They leave the book when paid
+  or sold; pledged notes stay in it, flagged. **Notes the bank issued** (its bonds, or
+  term deposits written as notes) are its borrowing. The Fed sees both sides, with
+  maturities and overdue payments, at every block. No bank role or address is needed for
+  notes: banks matter only at the discount window.
 - **Credit history without names:** each address's record of paid and overdue notes is
   public, so a good payer borrows more cheaply even pseudonymously; a new address has no
   history.
@@ -390,6 +395,13 @@ calls and conversions can be added as types later.
   banker's acceptance, for a fee). **Only banks can take notes to the Fed,** and the Fed
   decides which notes are eligible (for example guaranteed by a bank or secured by a
   ring lien). Lending outside banks, "shadow banking" in the US, is fully visible here.
+- **A note is abstract (as a veksel):** it says who pays, how much, when, and to whom
+  (the holder's address), never why; the underlying deal stays between the parties.
+  **Payments go to the address that holds the note at that block,** nowhere else.
+- **Delivery versus payment:** with a price, the note and the money change hands in one
+  transaction signed by both sides, or not at all, so neither side has to go first.
+  Without a price (credit for goods, a note issued to oneself for sale later) only the
+  note moves.
 - **Note ID and payments:** a note's ID is the SHA3-256 hash of its issue record (issuer,
   schedule, first holder, collateral, and a nonce so that two equal notes differ).
   `NOTE_ENDORSE` and `NOTE_PAY` name the note by its ID. A payment carries the ID and the
@@ -408,6 +420,27 @@ calls and conversions can be added as types later.
 - **Notes are not money:** they do not count in the supply, and nobody must accept them.
   An issue fee (as for any transaction) limits spam. Who stands behind an address is the
   lender's business; the protocol does not ask.
+
+### Public debt: note series (2026-11-27)
+
+**The founder's idea: an issuer writes a note to itself and investors buy in.** For a
+public issue, one note is not enough: many investors buy parts. A **note series** is one
+issue divided into equal units.
+
+- `NOTE_SERIES_ISSUE`: issuer, schedule per unit, number of units (for example 1,000 units
+  of 1,000,000 face), optional collateral and guarantor; all units start with the issuer.
+- **Investors buy units** with endorse-and-pay transactions, in any number of units, from
+  the issuer (the offering) or from each other later (the secondary market).
+- **One payment for the whole series:** the issuer pays the total due to the series, and
+  the chain divides it among the holders by units held at that block. Units still held
+  by the issuer receive nothing and can be cancelled.
+- **Overdue** applies to the whole series. Claiming the collateral is decided by holders
+  of a majority of the units, and the proceeds are shared by units (open: whether a
+  trustee address may act for the holders).
+- **Uses:** a ring founder raising money against future ring income, a bank issuing
+  bonds, a company or a person borrowing from many lenders, and later perhaps the Fed's
+  treasury. The series's price is the market's; its schedule, payments and holders are on
+  chain.
 
 ### Liens on rings (proposed)
 
