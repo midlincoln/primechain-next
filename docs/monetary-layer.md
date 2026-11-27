@@ -459,9 +459,24 @@ post-quantum (ML-DSA).
 - **RSA keys:** at the testnet one party generates and splits the keys, said openly; later
   a key ceremony on chain (`ceremonies.md`).
 
-Open: how a freeze is triggered and voted, how a freeze is triggered
-and voted, swap fees (a unit fee breaks round notes into change), denominations,
-backing of expired notes (treasury proposed), distributed key generation, and a
+**Freezing a kind (agreed 2026-11-27),** the emergency brake for forgery (rule 9):
+
+- **Triggers:** (1) **proof of forgery,** automatic in the same block: the chain counts
+  notes signed and notes spent per kind, and more spent than signed is proof; (2)
+  **suspicion** (a leaked key, a hacked signing server, news of an attack on RSA at our
+  key size): an **emergency vote** by a validator quorum, proposed by any validator,
+  effective at once without the usual notice. Ending a freeze after a false alarm takes
+  a normal vote with notice.
+- **Redemption speed limit per kind** (for example at most 5% of a kind's notes per 1,000
+  blocks): the automatic trigger fires only after the vault is drained, so the limit
+  leaves a forger only a small slice before validators freeze. Refresh is not limited.
+- **Effect:** no buying, refresh or redemption of the kind; a presentation window in which
+  holders register their notes on chain; then the remaining backing is paid pro rata, at
+  most par. Forged and honest notes cannot be told apart, so they share the loss; no
+  other kind is touched. The kind's key is retired and a new series issued.
+- Parameters: presentation window, redemption speed limit, emergency quorum.
+
+Open: the exact limits when cash opens, distributed key generation, and a
 ring founder exchanging barren primes before opening a ring (costs seigniorage
 only, so it is bounded by the limit).
 

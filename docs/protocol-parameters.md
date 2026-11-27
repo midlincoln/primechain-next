@@ -100,6 +100,9 @@ so far. The rest is designed or planned.
 | 51 | blocks a frozen bank has to fix the cause before wind-down | to be set | monetary-layer |
 | 52 | withdrawal claim deposit | to be set | monetary-layer |
 | 53 | minimum withdrawal claim | to be set | monetary-layer |
+| 54 | cash freeze: presentation window (blocks) | to be set | monetary-layer |
+| 55 | cash redemption speed limit per kind | 5% of the kind per 1,000 blocks (proposed) | monetary-layer |
+| 56 | quorum for an emergency freeze | to be set | monetary-layer |
 
 The value of a ring prime (17) is a number of its own and does not follow the main
 reward (1) when either is changed. A value of 0 stops ring issuance for new primes.
