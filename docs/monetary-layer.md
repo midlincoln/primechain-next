@@ -389,6 +389,12 @@ calls and conversions can be added as types later.
   banker's acceptance, for a fee). **Only banks can take notes to the Fed,** and the Fed
   decides which notes are eligible (for example guaranteed by a bank or secured by a
   ring lien). Lending outside banks, "shadow banking" in the US, is fully visible here.
+- **Note ID and payments:** a note's ID is the SHA3-256 hash of its issue record (issuer,
+  schedule, first holder, collateral, and a nonce so that two equal notes differ).
+  `NOTE_ENDORSE` and `NOTE_PAY` name the note by its ID. A payment carries the ID and the
+  amount only; **the chain routes it to whoever holds the note at that block**, so the
+  issuer never needs to know who holds it after endorsements, and a payment cannot reach
+  a former holder. The amount is applied to the oldest unpaid instalment first.
 - **Where notes live:** note actions are transactions in main-chain blocks; open notes
   form a table in the state (issuer, holder, schedule, paid so far, next payment due),
   committed by `finance_root` in every header; overdue status is computed from the
