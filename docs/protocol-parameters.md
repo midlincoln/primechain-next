@@ -90,8 +90,8 @@ so far. The rest is designed or planned.
 | | **Later (banks, loans)** | | |
 | 43 | membership stock, part paid in, dividend cap, loan limits | 6%, half, to be set | monetary-layer |
 | | **Banks and the Fed (2026-11-27)** | | |
-| 44 | **reserve ratio on demand deposits (ρ), a policy tool** | 100% | monetary-layer |
-| 45 | reserve ratio on term deposits (lendable until their date) | 0% | monetary-layer |
+| 44 | **reserve ratio on demand deposits (ρ), a policy tool** | open (100% was proposed) | monetary-layer |
+| 45 | reserve ratio on term deposits (lendable until their date) | open | monetary-layer |
 | 46 | grace period to move a deposit's reserve to the Fed | to be set | monetary-layer |
 | 47 | share of ring income on reserves paid to the bank (interest on reserves) | 100% | monetary-layer |
 | 48 | proof interval for banks (fingerprint and total of customer balances), in blocks | 10,000 (to tune on the testnet) | monetary-layer |
@@ -103,6 +103,15 @@ so far. The rest is designed or planned.
 | 54 | cash freeze: presentation window (blocks) | to be set | monetary-layer |
 | 55 | cash redemption speed limit per kind | 5% of the kind per 1,000 blocks (proposed) | monetary-layer |
 | 56 | quorum for an emergency freeze | to be set | monetary-layer |
+| | **Prudential rules for banks (2026-11-27)** | | |
+| 57 | **capital ratio k** (capital to risk-weighted assets), a policy tool | open | monetary-layer |
+| 58 | risk weights by kind of asset | open (0 / 20 / 50 / 100 / 150% proposed) | monetary-layer |
+| 59 | leverage ratio ℓ | open | monetary-layer |
+| 60 | liquidity coverage: horizon N (blocks), run-off share of demand deposits | open | monetary-layer |
+| 61 | stable funding limit | open | monetary-layer |
+| 62 | concentration limit c (per issuer address, per ring) | open | monetary-layer |
+| 63 | value of overdue notes over time | open | monetary-layer |
+| 64 | steps of enforcement (thresholds for limits, freeze, wind-down) | open | monetary-layer |
 
 The value of a ring prime (17) is a number of its own and does not follow the main
 reward (1) when either is changed. A value of 0 stops ring issuance for new primes.

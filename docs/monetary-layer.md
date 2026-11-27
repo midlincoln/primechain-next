@@ -257,9 +257,9 @@ checks and customer service stay in client apps.
   (for example to pay depositors of a failed bank).
   - **Rule:** reserves ≥ ρ · demand deposits + ρ_term · term deposits. **The reserve
     ratio is a policy tool of the Fed** (agreed 2026-11-27; parameters 44 and 45, voted
-    like any parameter): 100% on demand deposits and 0% on term deposits to start, so
-    banks lend only money promised to stay (maturity matching). Lowering ρ later, once
-    the discount window is tested, lets deposits fund more loans.
+    like any parameter). **Starting values are open** (100% on demand deposits was only
+    proposed). Below 100%, banks lend from demand deposits and so create deposit money;
+    the other prudential rules below then carry the safety.
     A deposit must be matched by the bank's transfer to its reserve account within a
     grace period (a parameter); until then the bank can move nothing else out.
   - **Withdrawals:** the bank pays from its deposit address; if short, it asks for a
@@ -340,6 +340,39 @@ at 0%. A run of 80% of demand deposits in five days needs no Fed help at full re
 100M at ρ = 50%, 193M at 20%, and exhausts the discount window at 0%. Paying 5% on term
 deposits costs about 3 points of return. Off-chain consumer loans and the borrower's
 currency risk: `experiments/lending/offchain_loan.py`.
+
+### Prudential rules for banks (agreed 2026-11-27)
+
+**All the usual measures of bank safety, enforced by the chain from chain data.** Both
+sides of a bank's balance sheet are on chain, so the chain computes them at every block:
+
+- **Assets:** units at the bank's addresses, its reserves at the Fed, notes it holds
+  (overdue notes at a reduced value, below).
+- **Liabilities:** the deposit total, notes the bank issued, loans from the Fed.
+- **Capital** = assets − liabilities.
+
+| Measure | Rule | Real-world model |
+|---|---|---|
+| **Capital adequacy** | capital ≥ k · risk-weighted assets. Weights by asset: units and reserves 0%, notes guaranteed by another bank 20%, notes secured by a ring lien 50%, unsecured notes 100%, overdue notes 150% | Basel capital ratio |
+| **Leverage** | capital ≥ ℓ · total assets, without weights | Basel leverage ratio |
+| **Reserves** | reserves at the Fed ≥ ρ · demand deposits + ρ_term · term deposits | reserve requirement |
+| **Liquidity coverage** | liquid assets (units, reserves, Fed-eligible notes after haircut) ≥ what can leave within N blocks: demand deposits × a run-off share, plus term deposits and the bank's own notes falling due within N blocks | Basel liquidity coverage ratio |
+| **Stable funding** | notes held with long maturities are funded by deposits and notes issued with long maturities, within a limit | Basel net stable funding ratio |
+| **Concentration** | all notes issued or guaranteed by one address ≤ c · capital; all liens on one ring likewise | large-exposure limit |
+| **Overdue notes** | counted at a falling value: for example 50% after a short grace, 0% later | loan-loss provisions |
+
+**Enforcement, in steps** (like US "prompt corrective action"): a bank below a measure
+cannot buy new notes or pay out its own profits; well below, its addresses are frozen
+(the freeze rules above); if not fixed in time, it is wound down. Everything is computed,
+so no bank reports and every customer and the Fed see the same figures.
+
+**Limits:** concentration is per address, and a borrower can use many addresses; banks
+judge that risk themselves. With low reserves, the withdrawal claim is no longer fully
+covered by reserves at the Fed; covering a run beyond them needs the discount window, the
+Fed creating units (option B) or a deposit insurance fund paid by banks (open).
+
+All numbers are parameters (D20); their values are open and a later model will propose
+ranges.
 
 ### Loans as promissory notes (agreed 2026-11-27)
 
