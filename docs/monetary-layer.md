@@ -233,7 +233,7 @@ checks and customer service stay in client apps.
     grace period (a parameter); until then the bank can move nothing else out.
   - **Withdrawals:** the bank pays from its deposit address; if short, it asks for a
     release, which the chain allows when the rule still holds after the withdrawal.
-  - **Income on reserves (proposed):** reserves are primes and earn ring income, which the
+  - **Income on reserves (agreed 2026-11-27):** reserves are primes and earn ring income, which the
     Fed collects. The Fed pays the bank interest on reserves at a voted share of it
     (100% at first) and keeps the rest: the Fed's own interest-on-reserves lever and a
     source of validator income.
