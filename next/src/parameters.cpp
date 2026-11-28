@@ -48,6 +48,10 @@ const std::vector<ParamSpec> kSpecs = {
     {Param::RsaKeyBits, "RSA key bits", 3072, 16384, 3072},
     {Param::MembershipStockBp, "membership stock (bp of capital)", 0, kBp, 600},
     {Param::MembershipPaidInBp, "membership paid in (bp)", 0, kBp, 5000},
+    // Proposed starting value: the doc leaves kappa to be set; 100 per epoch is permissive (one per
+    // block on average with 100-block epochs). Gate 1 is the way to stop new rings.
+    {Param::RingsPerEpoch, "new rings per epoch (kappa)", 1, 1000000, 100},
+    {Param::RingDeposit, "ring deposit (micro-units)", 0, kMaxMoney, 100000},  // a policy tool; 0 allowed
 };
 
 u128 at(const ParameterValues& v, Param id) { return v.at(static_cast<std::uint32_t>(id)); }

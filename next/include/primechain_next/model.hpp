@@ -150,6 +150,54 @@ struct GovernanceTx {
     Bytes signature;
 };
 
+// B3.4: opening rings (docs/ring-records.md section 2, rings-design.md R5). Hard decoder bound for
+// the certificate bytes of a reveal; the voted limit is parameter CertificateBytes ([29]).
+constexpr std::size_t kMaxCertificateBytes = 64u << 20;
+constexpr std::size_t kRingSaltBytes = 32;  // proposed: a fixed 32-byte salt
+
+// RING_COMMIT (main-block transaction): a sealed claim on a ring not yet named. The deposit
+// leaves the discoverer and is held by nobody until the reveal (refund) or expiry (fee pool).
+// commitment = ringCommitment(network, discoverer, salt, certificateHash(type, version, bytes)).
+struct RingCommit {
+    std::uint64_t version{kVersion1};
+    std::string network_id;
+    Address discoverer;
+    Hash256 commitment{};
+    Integer deposit_asset;                // a main-chain prime
+    Amount deposit;                       // exactly parameter RingDeposit in force (0 allowed)
+    std::uint64_t nonce{0};               // the discoverer's nonce sequence, shared with transfers
+    Bytes public_key;                     // optional once the key is registered (D15)
+    Bytes signature;
+};
+
+// RING_REVEAL (ring batch; carried by the main block until ring batches exist, B3.6). No
+// signature: only the discoverer knows the salt. commit_index is the commit's position in the
+// ring_commits list of block commit_height.
+struct RingReveal {
+    std::uint64_t version{kVersion1};
+    std::uint64_t commit_height{0};
+    std::uint64_t commit_index{0};
+    Bytes salt;                           // kRingSaltBytes
+    std::uint64_t certificate_type{1};    // 1 = quadratic (R4)
+    std::uint64_t certificate_version{kVersion1};
+    Bytes certificate;                    // encode(QuadCertificate) for type 1
+};
+
+// RING_PAYEE (main-block transaction): the current payee of a ring names the next one (R6).
+struct RingPayee {
+    std::uint64_t version{kVersion1};
+    std::string network_id;
+    std::uint64_t ring{0};                // ring number
+    Address payee;                        // the new payee
+    std::uint64_t nonce{0};               // the current payee's nonce sequence
+    Bytes public_key;                     // of the current payee; optional once registered
+    Bytes signature;                      // by the current payee
+};
+
+Hash256 certificateHash(std::uint64_t type, std::uint64_t version, const Bytes& certificate);
+Hash256 ringCommitment(const std::string& network_id, const Address& discoverer, const Bytes& salt,
+                       const Hash256& certificate_hash);
+
 struct BlockHeader {                  // D9 (no previous prime)
     std::uint64_t version{kVersion1};
     std::string network_id;
@@ -174,6 +222,11 @@ struct Block {
     std::vector<Transfer> transfers;     // D6/D16: included with the closing prime, in order
     std::vector<GovernanceTx> governance;  // A3-2: votes and ready messages, after the transfers
     std::optional<AcceptedPrime> prime;  // absent only for the genesis seed blocks
+    // B3.4. Order of application: transfers, ring commits, ring payees, governance, then the
+    // ring step (expiry, reveals, openings). Reveals move to ring batches in B3.6.
+    std::vector<RingCommit> ring_commits;
+    std::vector<RingPayee> ring_payees;
+    std::vector<RingReveal> ring_reveals;
 };
 
 Bytes rangeSigningPayload(const RangeSubmission& range);
@@ -191,6 +244,14 @@ Bytes encode(const GovernanceProposal& proposal);
 Bytes encode(const GovernanceTx& tx);
 Bytes encode(const BlockHeader& header);
 Bytes encode(const Block& block);
+Bytes ringCommitSigningPayload(const RingCommit& commit);
+Bytes ringPayeeSigningPayload(const RingPayee& payee);
+Bytes encode(const RingCommit& commit);
+Bytes encode(const RingReveal& reveal);
+Bytes encode(const RingPayee& payee);
+bool decode(const Bytes& data, RingCommit& out, const Limits& limits, std::string& error);
+bool decode(const Bytes& data, RingReveal& out, const Limits& limits, std::string& error);
+bool decode(const Bytes& data, RingPayee& out, const Limits& limits, std::string& error);
 
 bool decode(const Bytes& data, RangeSubmission& out, const Limits& limits, std::string& error);
 bool decode(const Bytes& data, PrimeSubmission& out, const Limits& limits, std::string& error);

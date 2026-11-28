@@ -96,7 +96,7 @@ public:
     // A main-chain prime recorded in block `height` with its nominal issue (the main reward in
     // force then). Genesis primes 2 and 3 are recorded with 0: they have no holders (D7).
     bool addMainPrime(const Integer& p, std::uint64_t height, const Amount& issued, std::string& error);
-    // B3.4 will call these when a ring opens and when its payee changes (RING_PAYEE).
+    // Called by the Engine when a ring opens and when its payee changes (RING_PAYEE, B3.4).
     bool openRing(std::uint64_t number, const RingTerms& terms, std::uint64_t height, const Address& founder,
                   std::string& error);
     bool setPayee(std::uint64_t ring, std::uint64_t height, const Address& payee, std::string& error);
@@ -132,6 +132,8 @@ public:
                        const std::vector<Credit>& credits, const AssetId& fee_asset, const Amount& fee,
                        std::uint64_t height);
     void credit(const AssetId& x, const Address& a, const Amount& amount, std::uint64_t height);  // new main units
+    // B3.4: units leave `a` and are held by nobody (a ring deposit); credit() returns them.
+    SpendRefusal debit(const AssetId& x, const Address& a, const Amount& amount, std::uint64_t height);
     void creditPool(const AssetId& x, const Amount& amount);
     // D17: the pool of every asset to `payouts` in equal shares, the remainder one unit each to
     // the first ones. Returns the assets touched. No payouts: the pool keeps accumulating.

@@ -83,6 +83,14 @@ Bytes encode(const Value& v) {
         for (const auto& t : v.contents.transfers) w.bytes(primechain::next::encode(t));
         w.varint(v.contents.governance.size());
         for (const auto& g : v.contents.governance) w.bytes(primechain::next::encode(g));
+        // B3.4: ring commits and payee changes are main-block transactions; reveals ride in the
+        // main block until ring batches exist (B3.6).
+        w.varint(v.contents.ring_commits.size());
+        for (const auto& c : v.contents.ring_commits) w.bytes(primechain::next::encode(c));
+        w.varint(v.contents.ring_payees.size());
+        for (const auto& p : v.contents.ring_payees) w.bytes(primechain::next::encode(p));
+        w.varint(v.contents.ring_reveals.size());
+        for (const auto& r : v.contents.ring_reveals) w.bytes(primechain::next::encode(r));
         w.hash(v.contents.header_hash);  // the certificate binds the sealed block header (F7)
     }
     w.u8(v.previous ? 1 : 0);

@@ -15,6 +15,8 @@ The core engine for PrimeChain Next, built from `docs/main-chain-design.md`
 | `store.hpp/.cpp` | D19 persistence: append-only block file with checksummed frames, derived height index, atomic state snapshots |
 | `parameters.hpp/.cpp` | D20 parameter table: ids, bounds, history, digest |
 | `engine.hpp/.cpp` | In-memory engine: genesis {2, 3} (D7); range validation and competition (D1, D2, D4); Pratt-checked closing prime (D5); per-composite rewards (D8); block sealing; full replay; governance tally (A3-2); hooks to propose, check and apply consensus values |
+| `registry.hpp/.cpp` | B3.4 ring registry: ring records and open commits, with their encodings |
+| `engine_rings.cpp` | B3.4 engine part: RING_COMMIT, RING_REVEAL, deposits, gate 1, kappa, the opening rule, RING_PAYEE |
 | `consensus.hpp/.cpp` | A3.1 consensus core: per-instance (h, k) two-phase rounds, certificates, retention, proposer skip, equivocation evidence, durable state for restart |
 
 ## What A2.1 covers
@@ -161,7 +163,7 @@ Clean under AddressSanitizer and UndefinedBehaviorSanitizer.
 
 ## B3.1: parameter table (D20)
 
-`parameters.hpp/.cpp`: every number is a protocol parameter (36, ids 1–36), with placeholder
+`parameters.hpp/.cpp`: every number is a protocol parameter (38, ids 1–38; 37 and 38 added in B3.4), with placeholder
 hard bounds in code and a history, so `parameterAt(id, h)` gives the value for any block.
 Votes are one kind, `ParamChange` (id, old value, new value), with notice; a change applies
 from its effective height and never retroactively. Headers carry the digest of the table in
@@ -242,11 +244,76 @@ nominal issue 0 (2 and 3) counts as having no holders; zero moves are not record
 `spend` requires debits to equal credits plus fee per asset. The issuance backlog (parameter 19)
 is left to B3.5: the ledger takes v·e per prime as given.
 
+## B3.4: opening rings
+
+Records (`model.hpp`): `RingCommit` (version, network, discoverer, commitment, deposit asset and
+amount, nonce, optional key, signature), `RingReveal` (commit reference (height, index), salt,
+certificate type, version, bytes; no signature), `RingPayee` (ring, new payee, nonce, signature of
+the current payee). commitment = sha3("ring-commitment", network, discoverer, salt,
+sha3("certificate", type, version, bytes)). Blocks carry `ring_commits`, `ring_payees` and
+`ring_reveals`; commits and payee changes are leaves of `transactions_root`.
+
+- **Commit:** accepted only while gate 1 (`RingGateOpen`) is open (refused on arrival when
+  closed, nothing taken) and while fewer than kappa (`RingsPerEpoch`, new parameter 37) rings
+  have opened in the current epoch. The deposit (`RingDeposit`, new parameter 38, 100,000; 0
+  allowed) leaves the discoverer and is held by nobody (`AssetLedger::debit`).
+- **Reveal:** first matched against an unexpired sealed commit (an unmatched reveal is refused
+  at submission and makes a block invalid on replay, so it costs nothing). Then type and
+  version, size (`CertificateBytes`), encoding, eligibility |D| <= F^t, the B3.2 verifier, and
+  the registry. A matching but invalid reveal is included: the deposit goes to the fee pool and
+  the commit is settled at once. A valid reveal is refunded in its block, also a loser's.
+- **Opening (R5):** after the block's reveals, commits are walked in (block, index) order; the
+  walk stops at the first sealed one. Each revealed commit before it either opens its ring (the
+  earliest) or loses to an earlier one. A commit not revealed by block height + W (the reveal
+  window in force at the commit) expires at the start of block height + W + 1, its deposit going
+  to the fee pool; so a revealed ring opens at most W blocks after its own commit.
+- **Ring record** (`RingEntry`): number, ring ID, type, version, certificate hash, D and unit,
+  founder, payee history, terms (`ringTermsAt(h)`, fixed), opening block, the winning commit,
+  frontier (0 = no row yet), tip (`ringGenesisHash` until B3.5 writes ring blocks), pause state
+  (a field only). Opening calls `AssetLedger::openRing`, a payee change `AssetLedger::setPayee`.
+- **State:** the registry is in the snapshot; `extension_root` = Merkle root over the ring
+  records by number, the open commits in order, then the block's reveals. `lastRingOutcomes()`
+  lists what happened to each commit in the last block (refunded, forfeited with the reason,
+  expired, opened, lost); it is not state.
+- **Primality of the factors of D:** exact from chain data. A factor at or below the frontier is
+  on chain; one above it is at most F^2 (eligibility), so trial division by the chain's primes
+  up to its square root decides. No Pratt certificates are needed.
+- **Consensus:** prime values carry the ring lists (hashed in `consensus::encode(Value)`), so
+  `buildPrimeContents`/`checkPrimeValue`/`applyDecidedPrime` include them.
+
+Choices left open by the docs (proposed): one nonce sequence per address for transfers, ring
+commits and payee changes; the deposit is exactly the parameter, in any main-chain prime; a commit
+is revealed in a later block, never its own; the salt is 32 bytes; order in a block: transfers,
+ring commits, ring payee changes, governance, then expiry, reveals, openings, then rewards;
+eligibility uses the frontier at the end of the previous block; a reveal of a ring that was open
+before the commit's block forfeits, one opened in or after it is a refunded loser; kappa counts
+openings, so the commits already in flight can push an epoch past it; kappa starts at 100 per
+epoch (the doc leaves it to be set); a payee change applies from its block, the last in a block
+counts; the ring frontier starts at 0 and the tip at a genesis hash. Not built: "blocks under a
+pause of all rings do not count toward the 10" (pausing comes with B3.6).
+
+**How B3.5 and B3.6 plug in.** B3.5 reads D and the unit from `RingEntry` for `checkSegment`,
+advances `frontier` and `tip` as ring blocks are accepted, and records rows in the ledger.
+B3.6 moves `ring_reveals` from the main block into ring batches: the batch handler calls the
+same `applyRingReveal` then `openRings` for the batch's open height (expiry stays at main
+blocks), and `extension_root` takes the batch's ring blocks. Pausing sets `RingEntry::paused`
+and the R5 window rule for a pause of all rings goes into `expireCommits`.
+
+Tests (`ctest -R next_ring_open`):
+
+| Test | What it checks |
+|---|---|
+| `next_ring_open_race` | the ring-records example (A commits at 100, B at 101 and reveals at 102, A at 105: ring opens for A at 105, B refunded at 102); B alone opens at once; block order within one block; expiry at 111 (deposit to the pool, B's ring opens at 101 + 10, a late reveal refused, later commits unblocked); a reveal in the last block of the window; a loser that reveals after the opening is refunded; the record fields and the ledger wiring; replay |
+| `next_ring_open_rules` | copied reveals (wrong salt, wrong certificate, missing index, another's secret under one's own commit, a second reveal, a copy committed after the reveal loses and is refunded); a block with an unmatched reveal fails replay; invalid certificates (wrong generator, non-PID, garbage), too large (limit 1,024 bytes), duplicate ring: deposits to the pool with the reason, no delay for later commits; eligibility at F = 5 (-43 refused, -7 and 17 open, factors above F by trial division); deposit 0 by an address with no units; insufficient funds and a wrong deposit not included, and invalid on replay; gate 1 closed; kappa = 1 per epoch |
+| `next_ring_open_payee` | RING_PAYEE only by the current payee, unknown ring, payee history in registry and ledger, the old payee refused (and invalid on replay), stale nonce, replay |
+| `next_ring_open_governance` | gate 1 closed by vote: new commits refused, a commit made while open still opens after (R2) |
+| `next_ring_open_persistence` | restart with snapshots every 3 blocks while commits are sealed and revealed; open, payee change and expiry after restart; second restart; replay from the block file; codec round trip; identical tip, state root, registry and ledger |
+
 ## Deferred
 
 - **Monetary layer:** reserves, loans, banks.
 - **A3.2–A3.3:** networking, catch-up from the block file, a validator daemon.
-- **B3:** `extension_root` (currently zero) and the rings layer.
+- **B3:** mining rings (B3.5), ring batches and pausing (B3.6).
 - An incremental state Merkle tree. `state_root` currently hashes one cached
   digest per asset.
 

@@ -376,6 +376,15 @@ void AssetLedger::credit(const AssetId& x, const Address& a, const Amount& amoun
     move(x, a, static_cast<i128>(amount.raw()), height);
 }
 
+SpendRefusal AssetLedger::debit(const AssetId& x, const Address& a, const Amount& amount, std::uint64_t height) {
+    if (!exists(x)) return SpendRefusal::UnknownAsset;
+    if (amount == Amount{}) return SpendRefusal::None;
+    if (amount.raw() >> 126) return SpendRefusal::Overflow;
+    if (owned(x, a) < amount) return SpendRefusal::NotEnough;
+    move(x, a, -static_cast<i128>(amount.raw()), height);
+    return SpendRefusal::None;
+}
+
 void AssetLedger::creditPool(const AssetId& x, const Amount& amount) {
     if (amount == Amount{}) return;
     Amount& slot = pool_[x];

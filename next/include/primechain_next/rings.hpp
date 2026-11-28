@@ -19,8 +19,8 @@ namespace primechain::next {
 
 constexpr std::uint64_t kQuadraticCertificateType = 1;
 
-// "This integer is prime" as the chain knows it (a finalized main-chain prime, or a Pratt
-// certificate supplied with the ring; wiring is B3.4).
+// "This integer is prime" as the chain knows it. The Engine (B3.4, Engine::chainPrime) answers
+// exactly from chain data: on chain up to the frontier F, trial division by chain primes up to F^2.
 using PrimeOracle = std::function<bool(const Integer&)>;
 
 struct QuadElement {   // c0 + c1*omega, signed

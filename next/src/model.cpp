@@ -7,7 +7,8 @@ namespace {
 
 enum Tag : std::uint64_t {
     kRangeTag = 1, kPrimeTag = 2, kAcceptedTag = 3, kHeaderTag = 4, kBlockTag = 5, kAcceptedPrimeTag = 6, kKeyTag = 7,
-    kTransferTag = 8, kValidatorTag = 9, kProposalTag = 10, kGovernanceTag = 11
+    kTransferTag = 8, kValidatorTag = 9, kProposalTag = 10, kGovernanceTag = 11, kRingCommitTag = 12,
+    kRingRevealTag = 13, kRingPayeeTag = 14
 };
 
 void writeRangeFields(Writer& w, const RangeSubmission& r) {
@@ -62,6 +63,28 @@ void writeValidatorFields(Writer& w, const ValidatorRecord& v) {
     w.bytes(v.consensus_key);
     w.text(v.payout_address);
     w.bytes(v.payout_key);
+}
+
+void writeRingCommitFields(Writer& w, const RingCommit& c) {
+    w.varint(kRingCommitTag);
+    w.varint(c.version);
+    w.text(c.network_id);
+    w.text(c.discoverer);
+    w.hash(c.commitment);
+    w.integer(c.deposit_asset);
+    w.amount(c.deposit);
+    w.varint(c.nonce);
+    w.bytes(c.public_key);
+}
+
+void writeRingPayeeFields(Writer& w, const RingPayee& p) {
+    w.varint(kRingPayeeTag);
+    w.varint(p.version);
+    w.text(p.network_id);
+    w.varint(p.ring);
+    w.text(p.payee);
+    w.varint(p.nonce);
+    w.bytes(p.public_key);
 }
 
 void writeHeader(Writer& w, const BlockHeader& h) {
@@ -182,6 +205,24 @@ bool readGovernance(Reader& r, GovernanceTx& t, const Limits& l) {
     t.kind = static_cast<GovernanceTxKind>(kind);
     return readProposal(r, t.proposal, l) && r.bytes(t.signer_key, l.max_key_bytes) &&
            r.bytes(t.signature, l.max_signature_bytes);
+}
+
+bool readRingCommit(Reader& r, RingCommit& c, const Limits& l) {
+    return expectTag(r, kRingCommitTag, c.version) && r.text(c.network_id, l.max_text) && r.text(c.discoverer, l.max_text) &&
+           r.hash(c.commitment) && r.integer(c.deposit_asset) && r.amount(c.deposit) && r.varint(c.nonce) &&
+           r.bytes(c.public_key, l.max_key_bytes) && r.bytes(c.signature, l.max_signature_bytes);
+}
+
+bool readRingReveal(Reader& r, RingReveal& v) {
+    return expectTag(r, kRingRevealTag, v.version) && r.varint(v.commit_height) && r.varint(v.commit_index) &&
+           r.bytes(v.salt, kRingSaltBytes) && r.varint(v.certificate_type) && r.varint(v.certificate_version) &&
+           r.bytes(v.certificate, kMaxCertificateBytes);
+}
+
+bool readRingPayee(Reader& r, RingPayee& p, const Limits& l) {
+    return expectTag(r, kRingPayeeTag, p.version) && r.text(p.network_id, l.max_text) && r.varint(p.ring) &&
+           r.text(p.payee, l.max_text) && r.varint(p.nonce) && r.bytes(p.public_key, l.max_key_bytes) &&
+           r.bytes(p.signature, l.max_signature_bytes);
 }
 
 template <typename T, typename F>
@@ -368,6 +409,12 @@ Bytes encode(const Block& block) {
     for (const auto& g : block.governance) w.bytes(encode(g));
     w.u8(block.prime ? 1 : 0);
     if (block.prime) w.bytes(encode(*block.prime));
+    w.varint(block.ring_commits.size());
+    for (const auto& c : block.ring_commits) w.bytes(encode(c));
+    w.varint(block.ring_payees.size());
+    for (const auto& p : block.ring_payees) w.bytes(encode(p));
+    w.varint(block.ring_reveals.size());
+    for (const auto& v : block.ring_reveals) w.bytes(encode(v));
     return w.data();
 }
 
@@ -433,7 +480,20 @@ bool decode(const Bytes& data, Block& out, const Limits& limits, std::string& er
                 return false;
             b.prime = prime;
         }
-        return true;
+        auto readList = [&](auto& list, std::size_t max_bytes) {
+            std::uint64_t n = 0;
+            if (!r.varint(n) || n > limits.max_list) return false;
+            list.resize(n);
+            for (auto& item : list) {
+                Bytes raw;
+                std::string inner;
+                if (!r.bytes(raw, max_bytes) || !decode(raw, item, limits, inner)) return false;
+            }
+            return true;
+        };
+        const std::size_t tx_bytes = 4 * limits.max_text + limits.max_key_bytes + limits.max_signature_bytes + 256;
+        return readList(b.ring_commits, tx_bytes) && readList(b.ring_payees, tx_bytes) &&
+               readList(b.ring_reveals, kMaxCertificateBytes + 256);
     });
 }
 
@@ -466,6 +526,80 @@ Hash256 submissionHash(const PrimeSubmission& prime) {
     w.text("primechain-next/prime-submission-id");
     const Bytes body = encode(prime);
     w.bytes(body);
+    return sha3(w.data());
+}
+
+Bytes ringCommitSigningPayload(const RingCommit& commit) {
+    Writer w;
+    w.text("primechain-next/ring-commit");
+    writeRingCommitFields(w, commit);
+    return w.data();
+}
+
+Bytes ringPayeeSigningPayload(const RingPayee& payee) {
+    Writer w;
+    w.text("primechain-next/ring-payee");
+    writeRingPayeeFields(w, payee);
+    return w.data();
+}
+
+Bytes encode(const RingCommit& commit) {
+    Writer w;
+    writeRingCommitFields(w, commit);
+    w.bytes(commit.signature);
+    return w.data();
+}
+
+Bytes encode(const RingPayee& payee) {
+    Writer w;
+    writeRingPayeeFields(w, payee);
+    w.bytes(payee.signature);
+    return w.data();
+}
+
+Bytes encode(const RingReveal& v) {
+    Writer w;
+    w.varint(kRingRevealTag);
+    w.varint(v.version);
+    w.varint(v.commit_height);
+    w.varint(v.commit_index);
+    w.bytes(v.salt);
+    w.varint(v.certificate_type);
+    w.varint(v.certificate_version);
+    w.bytes(v.certificate);
+    return w.data();
+}
+
+bool decode(const Bytes& data, RingCommit& out, const Limits& limits, std::string& error) {
+    return decodeStrict(data, out, limits, error, [&](Reader& r, RingCommit& o) { return readRingCommit(r, o, limits); });
+}
+
+bool decode(const Bytes& data, RingReveal& out, const Limits& limits, std::string& error) {
+    return decodeStrict(data, out, limits, error, [&](Reader& r, RingReveal& o) { return readRingReveal(r, o); });
+}
+
+bool decode(const Bytes& data, RingPayee& out, const Limits& limits, std::string& error) {
+    return decodeStrict(data, out, limits, error, [&](Reader& r, RingPayee& o) { return readRingPayee(r, o, limits); });
+}
+
+Hash256 certificateHash(std::uint64_t type, std::uint64_t version, const Bytes& certificate) {
+    Writer w;
+    w.text("primechain-next/certificate");
+    w.varint(type);
+    w.varint(version);
+    w.bytes(certificate);
+    return sha3(w.data());
+}
+
+// ring-records section 2: hash(tag || network || discoverer || salt || hash(certificate)).
+Hash256 ringCommitment(const std::string& network_id, const Address& discoverer, const Bytes& salt,
+                       const Hash256& certificate_hash) {
+    Writer w;
+    w.text("primechain-next/ring-commitment");
+    w.text(network_id);
+    w.text(discoverer);
+    w.bytes(salt);
+    w.hash(certificate_hash);
     return sha3(w.data());
 }
 

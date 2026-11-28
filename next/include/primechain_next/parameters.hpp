@@ -51,6 +51,8 @@ enum class Param : std::uint32_t {
     RsaKeyBits = 34,            // [40]
     MembershipStockBp = 35,     // [43] share of a bank's capital
     MembershipPaidInBp = 36,    // [43] part of the subscription paid in
+    RingsPerEpoch = 37,         // [25] kappa: rings opened per epoch, at most (B3.4; doc value to be set)
+    RingDeposit = 38,           // [27] deposit with each RING_COMMIT, in micro-units of any main-chain prime (0 allowed)
 };
 
 struct ParamSpec {

@@ -5,6 +5,7 @@
 #include "primechain_next/assets.hpp"
 #include "primechain_next/model.hpp"
 #include "primechain_next/parameters.hpp"
+#include "primechain_next/registry.hpp"
 #include "primechain_next/store.hpp"
 
 #include <map>
@@ -85,6 +86,9 @@ public:
     struct PrimeContents {
         std::vector<Transfer> transfers;
         std::vector<GovernanceTx> governance;
+        std::vector<RingCommit> ring_commits;  // B3.4
+        std::vector<RingPayee> ring_payees;
+        std::vector<RingReveal> ring_reveals;  // carried by the main block until ring batches (B3.6)
         Hash256 header_hash{};  // hash of the sealed header, so a certificate binds the block (F7)
     };
     std::optional<RangeSubmission> bestPendingRange() const;  // highest end, ties by arrival
@@ -112,6 +116,19 @@ public:
     // are dropped), then rewards (D8), then the epoch distribution (D17).
     bool validatePrime(const PrimeSubmission& prime, std::string& error) const;
     std::optional<Block> closeBlock(const PrimeSubmission& prime, std::string& error);
+
+    // B3.4: opening rings (ring-records.md section 2, R2, R3, R5, R6). Submission checks form and
+    // signature (and, for a commit, that gate 1 is open now); state is checked at inclusion.
+    // A reveal is accepted for the queue only if it matches an unexpired sealed commit, so
+    // unmatched reveals cost nothing.
+    bool submitRingCommit(const RingCommit& commit, std::string& error);
+    bool submitRingPayee(const RingPayee& payee, std::string& error);
+    bool submitRingReveal(const RingReveal& reveal, std::string& error);
+    const RingRegistry& rings() const { return registry_; }
+    const std::vector<RingOutcome>& lastRingOutcomes() const { return ring_outcomes_; }  // of the last block
+    std::size_t pendingRingCount() const {
+        return pending_ring_commits_.size() + pending_ring_payees_.size() + pending_ring_reveals_.size();
+    }
 
     // Key registry: each key is stored once (in the block where it is first accepted).
     bool hasKey(const Address& address) const { return keys_.count(address) != 0; }
@@ -141,8 +158,18 @@ private:
     bool checkTransferForm(const Transfer& t, std::string& error) const;
     bool applyTransfer(const Transfer& t, std::string& error);  // state checks, then apply
     bool registerKey(const Address& address, const Bytes& key, std::string& error);
-    std::optional<Block> closeAccepted(const AcceptedPrime& prime, const std::vector<Transfer>& transfers,
-                                       const std::vector<GovernanceTx>& governance, bool strict, std::string& error);
+    std::optional<Block> closeAccepted(const AcceptedPrime& prime, const PrimeContents& contents, bool strict,
+                                       std::string& error);
+    // B3.4 (engine_rings.cpp), all for the block being sealed (height_ + 1).
+    bool checkRingCommitForm(const RingCommit& c, std::string& error) const;
+    bool applyRingCommit(const RingCommit& c, std::uint64_t index, std::string& error);
+    bool checkRingPayeeForm(const RingPayee& p, std::string& error) const;
+    bool applyRingPayee(const RingPayee& p, std::string& error);
+    const OpenCommit* matchReveal(const RingReveal& v, std::uint64_t height, std::string& error) const;
+    bool applyRingReveal(const RingReveal& v, std::string& error);  // false: unmatched (not includable)
+    void expireCommits();
+    void openRings();
+    bool chainPrime(const Integer& n) const;  // the PrimeOracle for certificates (exact, R3)
     bool checkGovernanceForm(const GovernanceTx& tx, std::string& error) const;
     bool applyGovernance(const GovernanceTx& tx, std::string& error);
     bool isScheduled(const Hash256& proposal_id) const;
@@ -196,6 +223,11 @@ private:
     std::set<Integer> primes_;
     std::map<Integer, Integer> divisors_;                     // composite -> recorded divisor
     AssetLedger ledger_;                                      // balances with history, fee pool (B3.3)
+    RingRegistry registry_;                                   // ring records and open commits (B3.4)
+    std::vector<RingOutcome> ring_outcomes_;                  // of the block being sealed (not state)
+    std::vector<RingCommit> pending_ring_commits_, included_ring_commits_;
+    std::vector<RingPayee> pending_ring_payees_, included_ring_payees_;
+    std::vector<RingReveal> pending_ring_reveals_, included_ring_reveals_;
     std::map<Integer, Hash256> asset_hashes_;
     std::map<Address, Bytes> keys_;                           // address -> public key (registered once)
     std::map<Address, std::uint64_t> nonces_;                 // sender -> last used nonce

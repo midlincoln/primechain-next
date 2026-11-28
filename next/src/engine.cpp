@@ -549,20 +549,27 @@ std::optional<Block> Engine::closeBlock(const PrimeSubmission& prime, std::strin
     accepted.witness = prime.witness;
     accepted.provider = prime.provider;
     accepted.submission_hash = submissionHash(prime);  // covers the signature bytes
-    const std::vector<Transfer> candidates = std::move(pending_transfers_);
+    PrimeContents candidates;
+    candidates.transfers = std::move(pending_transfers_);
     pending_transfers_.clear();
-    const std::vector<GovernanceTx> governance = std::move(pending_governance_);
+    candidates.governance = std::move(pending_governance_);
     pending_governance_.clear();
-    return closeAccepted(accepted, candidates, governance, /*strict=*/false, error);
+    candidates.ring_commits = std::move(pending_ring_commits_);
+    pending_ring_commits_.clear();
+    candidates.ring_payees = std::move(pending_ring_payees_);
+    pending_ring_payees_.clear();
+    candidates.ring_reveals = std::move(pending_ring_reveals_);
+    pending_ring_reveals_.clear();
+    return closeAccepted(accepted, candidates, /*strict=*/false, error);
 }
 
-std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, const std::vector<Transfer>& transfers,
-                                           const std::vector<GovernanceTx>& governance, bool strict, std::string& error) {
+std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, const PrimeContents& contents, bool strict,
+                                           std::string& error) {
     if (accepted.version != kVersion1 || accepted.provider.empty()) { error = "invalid accepted prime"; return std::nullopt; }
     if (!checkPrimeArithmetic(accepted.prime, accepted.witness, error)) return std::nullopt;
     // 1. Transfers in order (D6, D16). Live: invalid ones are dropped. Replay: any invalid one fails.
     included_transfers_.clear();
-    for (const auto& t : transfers) {
+    for (const auto& t : contents.transfers) {
         std::string reason;
         if (checkTransferForm(t, reason) && applyTransfer(t, reason)) {
             included_transfers_.push_back(t);
@@ -571,9 +578,30 @@ std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, const 
             return std::nullopt;
         }
     }
-    // 1b. Governance votes and ready messages (A3-2), after the transfers.
+    // 1b. Ring commits, then payee changes (B3.4). A commit's index is its position in the block.
+    included_ring_commits_.clear();
+    for (const auto& c : contents.ring_commits) {
+        std::string reason;
+        if (checkRingCommitForm(c, reason) && applyRingCommit(c, included_ring_commits_.size(), reason)) {
+            included_ring_commits_.push_back(c);
+        } else if (strict) {
+            error = "invalid ring commit in block: " + reason;
+            return std::nullopt;
+        }
+    }
+    included_ring_payees_.clear();
+    for (const auto& p : contents.ring_payees) {
+        std::string reason;
+        if (checkRingPayeeForm(p, reason) && applyRingPayee(p, reason)) {
+            included_ring_payees_.push_back(p);
+        } else if (strict) {
+            error = "invalid ring payee change in block: " + reason;
+            return std::nullopt;
+        }
+    }
+    // 1c. Governance votes and ready messages (A3-2), after the transfers.
     included_governance_.clear();
-    for (const auto& g : governance) {
+    for (const auto& g : contents.governance) {
         std::string reason;
         if (checkGovernanceForm(g, reason) && applyGovernance(g, reason)) {
             included_governance_.push_back(g);
@@ -585,6 +613,21 @@ std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, const 
     std::erase_if(tallies_, [&](const auto& entry) { return entry.second.proposal.expiry_height <= height_; });  // lapse
     // Ready messages of proposals that lapsed without passing are pruned with their tallies.
     std::erase_if(ready_, [&](const auto& e) { return readyDead(e.first, e.second.expiry, e.second.sequence, height_ + 1); });
+    // 1d. The ring step (R5): commits past their window expire, then the reveals in order (an
+    // unmatched reveal is not includable), then every ring whose earlier commits are settled opens.
+    ring_outcomes_.clear();
+    expireCommits();
+    included_ring_reveals_.clear();
+    for (const auto& v : contents.ring_reveals) {
+        std::string reason;
+        if (applyRingReveal(v, reason)) {
+            included_ring_reveals_.push_back(v);
+        } else if (strict) {
+            error = "invalid ring reveal in block: " + reason;
+            return std::nullopt;
+        }
+    }
+    openRings();
     // 2. D8 rewards: half to the prime finder, half per composite; remainders to the finder.
     const Integer& p = accepted.prime;
     const std::uint64_t total = static_cast<std::uint64_t>(parameter(Param::MainReward));
@@ -622,6 +665,12 @@ Block Engine::sealBlock(const Integer& prime, const std::optional<AcceptedPrime>
     included_transfers_.clear();
     block.governance = std::move(included_governance_);
     included_governance_.clear();
+    block.ring_commits = std::move(included_ring_commits_);
+    included_ring_commits_.clear();
+    block.ring_payees = std::move(included_ring_payees_);
+    included_ring_payees_.clear();
+    block.ring_reveals = std::move(included_ring_reveals_);
+    included_ring_reveals_.clear();
     block.prime = accepted;
     ++height_;
     accepted_frontier_ = prime;
@@ -636,8 +685,15 @@ Block Engine::sealBlock(const Integer& prime, const std::optional<AcceptedPrime>
     std::vector<Bytes> tx_leaves;
     for (const auto& t : block.transfers) tx_leaves.push_back(encode(t));
     for (const auto& g : block.governance) tx_leaves.push_back(encode(g));
+    for (const auto& c : block.ring_commits) tx_leaves.push_back(encode(c));
+    for (const auto& p : block.ring_payees) tx_leaves.push_back(encode(p));
     h.transactions_root = merkleRoot(tx_leaves);
     h.state_root = stateRoot();
+    // ring-records section 3 (proposed form): the ring records with their tips, ordered by number,
+    // the open commits, then this block's reveals.
+    std::vector<Bytes> ext_leaves = registry_.leaves();
+    for (const auto& v : block.ring_reveals) ext_leaves.push_back(encode(v));
+    h.extension_root = merkleRoot(ext_leaves);
     tip_ = blockHash(h);
     blocks_.push_back(block);
     activateScheduled(height_ + 1);  // A3-2/A3-3: changes effective at the next height start now
@@ -678,7 +734,13 @@ bool Engine::applyBlock(const Block& b, std::string& error) {
         error = "missing prime" + where;
         return false;
     }
-    const auto rebuilt = closeAccepted(*b.prime, b.transfers, b.governance, /*strict=*/true, error);
+    PrimeContents contents;
+    contents.transfers = b.transfers;
+    contents.governance = b.governance;
+    contents.ring_commits = b.ring_commits;
+    contents.ring_payees = b.ring_payees;
+    contents.ring_reveals = b.ring_reveals;
+    const auto rebuilt = closeAccepted(*b.prime, contents, /*strict=*/true, error);
     if (!rebuilt) {
         error += where;
         return false;
@@ -753,6 +815,7 @@ Bytes Engine::encodeState() const {
         w.varint(height);
         w.bytes(encode(proposal));
     }
+    registry_.encode(w);  // ring records and open commits (B3.4)
     return w.data();
 }
 
@@ -850,6 +913,8 @@ bool Engine::decodeState(const Bytes& data, std::string& error) {
         if (!r.varint(height) || !readProposalBytes(p)) return fail("bad scheduled change");
         scheduled_.emplace_back(height, std::move(p));
     }
+    std::string registry_error;
+    if (!registry_.decode(r, l.max_text, registry_error)) return fail(registry_error);
     if (!r.done()) return fail("trailing bytes");
     for (const auto& asset : assets) refreshAssetHash(asset);
     return true;
@@ -985,16 +1050,29 @@ std::optional<Engine::PrimeContents> Engine::buildPrimeContents(const PrimeSubmi
     Engine sim = scratch();
     if (!sim.validatePrime(prime, error)) return std::nullopt;
     if (!prime.public_key.empty() && !sim.registerKey(prime.provider, prime.public_key, error)) return std::nullopt;
-    const auto block = sim.closeAccepted(acceptedFrom(prime), pending_transfers_, pending_governance_, /*strict=*/false, error);
+    PrimeContents candidates;
+    candidates.transfers = pending_transfers_;
+    candidates.governance = pending_governance_;
+    candidates.ring_commits = pending_ring_commits_;
+    candidates.ring_payees = pending_ring_payees_;
+    candidates.ring_reveals = pending_ring_reveals_;
+    const auto block = sim.closeAccepted(acceptedFrom(prime), candidates, /*strict=*/false, error);
     if (!block) return std::nullopt;
-    return PrimeContents{block->transfers, block->governance, blockHash(block->header)};
+    PrimeContents out;
+    out.transfers = block->transfers;
+    out.governance = block->governance;
+    out.ring_commits = block->ring_commits;
+    out.ring_payees = block->ring_payees;
+    out.ring_reveals = block->ring_reveals;
+    out.header_hash = blockHash(block->header);
+    return out;
 }
 
 bool Engine::checkPrimeValue(const PrimeSubmission& prime, const PrimeContents& contents, std::string& error) const {
     Engine sim = scratch();
     if (!sim.validatePrime(prime, error)) return false;
     if (!prime.public_key.empty() && !sim.registerKey(prime.provider, prime.public_key, error)) return false;
-    const auto block = sim.closeAccepted(acceptedFrom(prime), contents.transfers, contents.governance, /*strict=*/true, error);
+    const auto block = sim.closeAccepted(acceptedFrom(prime), contents, /*strict=*/true, error);
     if (!block) return false;
     if (blockHash(block->header) != contents.header_hash) { error = "prime value: header hash does not match"; return false; }
     return true;
@@ -1004,7 +1082,7 @@ std::optional<Block> Engine::applyDecidedPrime(const PrimeSubmission& prime, con
                                                std::string& error) {
     if (!validatePrime(prime, error)) return std::nullopt;
     if (!prime.public_key.empty() && !registerKey(prime.provider, prime.public_key, error)) return std::nullopt;
-    auto block = closeAccepted(acceptedFrom(prime), contents.transfers, contents.governance, /*strict=*/true, error);
+    auto block = closeAccepted(acceptedFrom(prime), contents, /*strict=*/true, error);
     if (!block) return std::nullopt;
     if (blockHash(block->header) != contents.header_hash) {  // checked before deciding; a mismatch here is a bug
         error = "decided prime value: header hash does not match the sealed block";
@@ -1024,6 +1102,22 @@ std::optional<Block> Engine::applyDecidedPrime(const PrimeSubmission& prime, con
                (g.kind == GovernanceTxKind::Ready &&
                 (ready_.count(proposalId(g.proposal)) ||
                  readyDead(proposalId(g.proposal), g.proposal.expiry_height, g.proposal.sequence, height_ + 1)));
+    });
+    // B3.4: drop included ring records, stale nonces, and reveals that no longer match.
+    std::set<Hash256> included_ring;
+    for (const auto& c : block->ring_commits) included_ring.insert(sha3(encode(c)));
+    for (const auto& p : block->ring_payees) included_ring.insert(sha3(encode(p)));
+    for (const auto& v : block->ring_reveals) included_ring.insert(sha3(encode(v)));
+    std::erase_if(pending_ring_commits_, [&](const RingCommit& c) {
+        return included_ring.count(sha3(encode(c))) || c.nonce <= nonce(c.discoverer);
+    });
+    std::erase_if(pending_ring_payees_, [&](const RingPayee& p) {
+        const RingEntry* r = registry_.ring(p.ring);
+        return included_ring.count(sha3(encode(p))) || !r || p.nonce <= nonce(r->payees.back().second);
+    });
+    std::erase_if(pending_ring_reveals_, [&](const RingReveal& v) {
+        std::string ignored;
+        return included_ring.count(sha3(encode(v))) || !matchReveal(v, height_ + 1, ignored);
     });
     pending_primes_.clear();
     return block;
