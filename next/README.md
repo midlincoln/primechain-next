@@ -256,7 +256,9 @@ sha3("certificate", type, version, bytes)). Blocks carry `ring_commits`, `ring_p
 - **Commit:** accepted only while gate 1 (`RingGateOpen`) is open (refused on arrival when
   closed, nothing taken) and while fewer than kappa (`RingsPerEpoch`, new parameter 37) rings
   have opened in the current epoch. The deposit (`RingDeposit`, new parameter 38, 100,000; 0
-  allowed) leaves the discoverer and is held by nobody (`AssetLedger::debit`).
+  allowed) leaves the discoverer and is held by nobody (`AssetLedger::debit`). The commit also
+  pays the minimum fee (`MinFee`, parameter 5, a policy tool) to the fee pool in the same asset,
+  so commits are never free even at deposit 0; the fee is not refunded.
 - **Reveal:** first matched against an unexpired sealed commit (an unmatched reveal is refused
   at submission and makes a block invalid on replay, so it costs nothing). Then type and
   version, size (`CertificateBytes`), encoding, eligibility |D| <= F^t, the B3.2 verifier, and

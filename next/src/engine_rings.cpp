@@ -6,7 +6,8 @@
 // Small rules chosen here (proposed, not agreed; listed in next/README.md):
 //  - One nonce sequence per address for transfers, ring commits and ring payee changes.
 //  - The deposit is exactly parameter RingDeposit in force at the commit's block, in any
-//    main-chain prime (0 allowed: then no units move).
+//    main-chain prime (0 allowed). The commit also pays the minimum fee (MinFee) to the fee pool
+//    in the same asset (agreed 2026-11-28), so commits are never free.
 //  - A commit may be revealed in blocks height+1 .. height+W, W the reveal window in force at the
 //    commit's block (never retroactive); it expires at the start of block height+W+1. Not built:
 //    "blocks under a pause of all rings do not count toward the window" (pausing is B3.6).
@@ -73,11 +74,17 @@ bool Engine::applyRingCommit(const RingCommit& c, std::uint64_t index, std::stri
     if (c.deposit != Amount::fromRaw(parameter(Param::RingDeposit))) { error = "deposit differs from the ring deposit"; return false; }
     if (c.nonce != nonce(c.discoverer) + 1) { error = "nonce out of order"; return false; }
     const AssetId asset = AssetId::main(c.deposit_asset);
-    if (ledger_.owned(asset, c.discoverer) < c.deposit) { error = "insufficient balance for the deposit"; return false; }
+    // A commit pays the minimum fee (parameter MinFee in force, a policy tool) to the fee pool, in
+    // the deposit's asset, besides the deposit, so commits are never free even at deposit 0.
+    const Amount fee = Amount::fromRaw(parameter(Param::MinFee));
+    const std::optional<Amount> cost = c.deposit.add(fee);
+    if (!cost) { error = "deposit and fee overflow"; return false; }
+    if (ledger_.owned(asset, c.discoverer) < *cost) { error = "insufficient balance for the deposit and fee"; return false; }
     if (!c.public_key.empty() && !registerKey(c.discoverer, c.public_key, error)) return false;
-    // The deposit is held by nobody (ring-records section 2).
-    if (const SpendRefusal refused = ledger_.debit(asset, c.discoverer, c.deposit, h); refused != SpendRefusal::None)
+    // The deposit is held by nobody (ring-records section 2); the fee goes to the pool.
+    if (const SpendRefusal refused = ledger_.debit(asset, c.discoverer, *cost, h); refused != SpendRefusal::None)
         throw std::logic_error(std::string("ledger refused a checked deposit: ") + refusalText(refused));
+    if (fee != Amount{}) ledger_.creditPool(asset, fee);
     nonces_[c.discoverer] = c.nonce;
     OpenCommit open;
     open.height = h;

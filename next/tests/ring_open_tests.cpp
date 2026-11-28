@@ -192,19 +192,21 @@ void raceTests() {
         require(dep == Amount(100000), "deposit starts at 100,000 micro-units");
         const Amount a0 = e.balance(w.A.address, w.a_asset), b0 = e.balance(w.B.address, w.b_asset);
         const Amount pool_a0 = e.feePoolBalance(w.a_asset);
+        const Amount fee = Amount::fromRaw(e.parameter(Param::MinFee));  // every commit pays it to the pool
+        const Amount pool_end = *pool_a0.add(w.b_asset == w.a_asset ? *fee.add(fee) : fee);
         commit(e, makeCommit(e, w.A, kSecretA, w.a_asset));
         Block b100 = w.next();
         require(b100.header.height == 100 && b100.ring_commits.size() == 1, "A's commit in block 100");
-        require(e.balance(w.A.address, w.a_asset) == *a0.sub(dep), "the deposit leaves A");
-        require(e.feePoolBalance(w.a_asset) == pool_a0, "the deposit is held by nobody, not the pool");
+        require(e.balance(w.A.address, w.a_asset) == *a0.sub(*dep.add(fee)), "the deposit and fee leave A");
+        require(e.feePoolBalance(w.a_asset) == *pool_a0.add(fee), "the deposit is held by nobody; only the fee goes to the pool");
         commit(e, makeCommit(e, w.B, kSecretB, w.b_asset));
         require(w.next().header.height == 101, "B commits at 101");
-        require(e.balance(w.B.address, w.b_asset) == *b0.sub(dep), "the deposit leaves B");
+        require(e.balance(w.B.address, w.b_asset) == *b0.sub(*dep.add(fee)), "the deposit and fee leave B");
         reveal(e, makeReveal(101, 0, kSecretB));
         Block b102 = w.next();
         require(b102.ring_reveals.size() == 1, "B reveals at 102");
         require(e.rings().rings().empty(), "B waits: A's earlier commit is still sealed");
-        require(e.balance(w.B.address, w.b_asset) == b0, "B's valid reveal is refunded at once");
+        require(e.balance(w.B.address, w.b_asset) == *b0.sub(fee), "B's valid reveal is refunded at once (the fee is not)");
         require(sealedAt(e, 101, 0) && sealedAt(e, 101, 0)->revealed, "B's commit is revealed and waiting");
         w.next();
         w.next();
@@ -221,9 +223,9 @@ void raceTests() {
         require(r.frontier == 0 && r.tip == ringGenesisHash(1, r.ring_id, r.certificate_hash, 105) && !r.paused,
                 "frontier, tip and pause state");
         require(e.rings().commits().empty(), "both commits settled");
-        require(e.balance(w.A.address, w.a_asset) == a0 && e.balance(w.B.address, w.b_asset) == b0,
+        require(e.balance(w.A.address, w.a_asset) == *a0.sub(fee) && e.balance(w.B.address, w.b_asset) == *b0.sub(fee),
                 "both deposits returned (B as the loser)");
-        require(e.feePoolBalance(w.a_asset) == pool_a0, "nothing went to the pool");
+        require(e.feePoolBalance(w.a_asset) == pool_end, "only the fees went to the pool");
         // B3.3 wiring: the ledger has the ring with the same terms and founder.
         const RingRecord* lr = e.assets().ring(1);
         require(lr && lr->terms == r.terms && lr->opened == 105 && lr->payees == r.payees, "ring wired into the asset ledger");
@@ -266,6 +268,7 @@ void raceTests() {
         Engine& e = w.e;
         const Amount dep = Amount::fromRaw(e.parameter(Param::RingDeposit));
         const Amount a0 = e.balance(w.A.address, w.a_asset), pool0 = e.feePoolBalance(w.a_asset);
+        const Amount fee = Amount::fromRaw(e.parameter(Param::MinFee));  // each commit pays it to the pool
         commit(e, makeCommit(e, w.A, kSecretA, w.a_asset));
         w.next();
         const Secret sb{salt(0xB3), kMinus4};
@@ -279,8 +282,8 @@ void raceTests() {
         require(e.height() == 111 && e.rings().ring(1) && e.rings().ring(1)->founder == w.B.address &&
                 e.rings().ring(1)->opened == 111, "B's ring opens at 111 = 101 + 10");
         require(!sealedAt(e, 100, 0), "A's commit expired");
-        require(e.feePoolBalance(w.a_asset) == *pool0.add(dep), "A's deposit went to the fee pool");
-        require(e.balance(w.A.address, w.a_asset) == *a0.sub(dep), "A is not refunded");
+        require(e.feePoolBalance(w.a_asset) == *pool0.add(dep)->add(*fee.mul(w.b_asset == w.a_asset ? 2 : 1)), "A's deposit went to the fee pool (with the commit fees)");
+        require(e.balance(w.A.address, w.a_asset) == *a0.sub(*dep.add(fee)), "A is not refunded (nor the fee)");
         std::string error;
         require(!e.submitRingReveal(makeReveal(100, 0, kSecretA), error), "a reveal after expiry is refused");
         // Later commits are no longer blocked: C commits at 112 and reveals at 113, opening at 113.
@@ -325,7 +328,7 @@ void raceTests() {
             refunded |= o.kind == RingOutcome::Kind::Refunded && o.commit_height == 101;
             lost |= o.kind == RingOutcome::Kind::Lost && o.commit_height == 101 && o.ring == 1;
         }
-        require(refunded && lost && e.balance(w.C.address, w.c_asset) == c0, "the late loser is refunded");
+        require(refunded && lost && e.balance(w.C.address, w.c_asset) == *c0.sub(Amount::fromRaw(e.parameter(Param::MinFee))), "the late loser is refunded (the fee is kept)");
         require(e.rings().rings().size() == 1 && e.rings().commits().empty(), "no second ring");
     }
     std::cout << "ring races: " << checks << " checks passed\n";
@@ -375,7 +378,7 @@ void ruleTests() {
         for (const auto& o : e.lastRingOutcomes()) lost |= o.kind == RingOutcome::Kind::Lost && o.commit_height == 103 && o.ring == 1;
         require(lost, "the copy lost ring 17 to B");
         const Amount dep = Amount::fromRaw(e.parameter(Param::RingDeposit));
-        require(e.balance(w.C.address, w.c_asset) == *c0.add(dep), "both of C's deposits refunded, the copier's as a loser");
+        require(e.balance(w.C.address, w.c_asset) == *c0.add(dep)->sub(Amount::fromRaw(e.parameter(Param::MinFee))), "both of C's deposits refunded, the copier's as a loser (fees kept)");
         require(e.rings().commits().empty(), "all settled");
         // Strict replay rejects a block that carries an unmatched reveal.
         std::vector<Block> blocks = e.blocks();
@@ -407,14 +410,15 @@ void ruleTests() {
             {{salt(4), large}, "size limit"},
             {{salt(5), kMinus7}, "already open"},
         };
-        const Integer asset = fundedAsset(e, w.B, *dep.mul(bad.size()));
+        const Amount fee = Amount::fromRaw(e.parameter(Param::MinFee)), each = *dep.add(fee);  // deposit and commit fee
+        const Integer asset = fundedAsset(e, w.B, *each.mul(bad.size()));
         const Amount pool0 = e.feePoolBalance(asset), b0 = e.balance(w.B.address, asset);
         for (std::size_t i = 0; i < bad.size(); ++i) {
             commit(e, makeCommit(e, w.B, bad[i].first, asset, std::nullopt, i + 1));
         }
         Block cb = w.next();  // 102
         require(cb.ring_commits.size() == bad.size(), "five commits");
-        require(e.balance(w.B.address, asset) == *b0.sub(*dep.mul(bad.size())), "five deposits held");
+        require(e.balance(w.B.address, asset) == *b0.sub(*each.mul(bad.size())), "five deposits and fees held");
         for (std::size_t i = 0; i < bad.size(); ++i) reveal(e, makeReveal(102, i, bad[i].first));
         // A valid commit behind them is not delayed by the invalid ones.
         const Secret good{salt(6), kFiftySeven};
@@ -430,8 +434,8 @@ void ruleTests() {
                 }
             require(seen, "forfeit recorded for bad reveal " + std::to_string(i));
         }
-        require(e.feePoolBalance(asset) == *pool0.add(*dep.mul(bad.size())), "the deposits went to the fee pool");
-        require(e.balance(w.B.address, asset) == *b0.sub(*dep.mul(bad.size())), "no refund for invalid reveals");
+        require(e.feePoolBalance(asset) == *pool0.add(*each.mul(bad.size()))->add(w.c_asset == asset ? fee : Amount{}), "the deposits and fees went to the fee pool");
+        require(e.balance(w.B.address, asset) == *b0.sub(*each.mul(bad.size())), "no refund for invalid reveals");
         for (std::size_t i = 0; i < bad.size(); ++i) require(!sealedAt(e, 102, i), "invalid commit settled");
         reveal(e, makeReveal(103, 0, good));
         w.next();  // 104
@@ -443,6 +447,26 @@ void ruleTests() {
     {
         Policy policy;
         policy.parameters[pid(Param::RingDeposit)] = 0;
+        {   // With the minimum fee in force, a commit is never free: N, holding nothing, is refused;
+            // A pays only the fee, which goes to the pool.
+            Engine f(policy);
+            const Miner A = newMiner(), N = newMiner();
+            closeNext(f, A, A);
+            const Secret sx{salt(44), kMinus43};
+            const Integer fa = fundedAsset(f, A, Amount(1));  // a prime A holds (2 and 3 have no holders)
+            commit(f, makeCommit(f, N, sx, fa, Amount{}));
+            Block b = closeNext(f, A, A);
+            require(b.ring_commits.empty() && f.nonce(N.address) == 0, "fee: a commit by an address with nothing is not included");
+            const Amount before = f.assets().pool(AssetId::main(fa));
+            const Amount had = f.assets().owned(AssetId::main(fa), A.address);
+            commit(f, makeCommit(f, A, sx, fa, Amount{}));
+            b = closeNext(f, A, A);
+            require(b.ring_commits.size() == 1, "fee: A's commit at deposit 0 is included");
+            require(*f.assets().pool(AssetId::main(fa)).sub(before) == Amount(1), "fee: 1 micro-unit to the pool");
+            require(f.assets().owned(AssetId::main(fa), A.address) < had, "fee: taken from A");
+            require(Engine::replay(f.policy(), f.blocks(), error).has_value(), "fee: replays: " + error);
+        }
+        policy.parameters[pid(Param::MinFee)] = 0;  // fee 0 as well: then a commit moves nothing
         Engine e(policy);
         const Miner A = newMiner(), N = newMiner();  // N holds nothing at all
         closeNext(e, A, A);  // block 3 closes 5; frontier 5
