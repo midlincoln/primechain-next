@@ -230,6 +230,11 @@ Tests (`ctest -R next_assets`):
 | `next_assets_alice` | the three Alice/Ovanes cases of `spend_test.py`, natively, under A4 (v = 100,000) and with v = 500,000: who gets the award, the seller left with nothing, 4 of 7 transfers refused in the block after the split, restart and replay, the pay-at-once ledger alongside |
 | `next_assets_spend` | replays all 8 runs of `spend_test.py` (3 scenarios, 5 random seeds, 2,935 blocks, 354 restarts) from `experiments/nested_rings/spend_vectors.txt` (`export_spend_vectors.py`): 8,490 accepted and 11,404 refused transfers decided as in Python; 83,968 balances equal to Python's pay-at-once ledger (sha3 of all lines) and to a C++ one, to the last unit; rounding loss and total issue equal; quadratic row shapes checked against the Kronecker symbol |
 
+All 20 `next_` tests pass on this branch (2026-11-28), including `next_generated_chain` (chain to
+19,997, 655 bytes per block, peak 30 MB) and `next_consensus_chain` (575 s wall) with balances on
+the ledger. Peak memory: compiling `assets.cpp` about 350 MB, the consensus tests about 470 MB;
+`next_assets_spend` runs in 27 s at 31 MB.
+
 Choices left open by the docs (proposed): parts to several primes below are equal with the
 remainder to the first (as D17); a prime below must come from an earlier block than the row
 ("lower rings first"); no validators at h means the 2/3 part is not issued; a main prime with
