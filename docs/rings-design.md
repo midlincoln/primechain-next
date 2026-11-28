@@ -253,6 +253,10 @@ i = 0.
   contains a unit ε ≠ ±1 (not necessarily fundamental), and a generator is valid
   only if neither multiplying nor dividing it by ε makes its encoding shorter.
   Degree 3 and up: a length cap instead (proposed, `degree-sheets.md`).
+- **Generator size is a policy tool (2026-11-28):** each coefficient of a recorded
+  generator has at most parameter 65 bytes (4,096 proposed). Raising it lets rings with
+  larger regulators be mined, at the cost of larger rows; the certificate limit (29) still
+  decides which rings can open.
 - **Exactly one row per rational prime q per ring,** so the same prime ideal
   cannot be recorded twice under different associates (π and π·ε).
 - Special treatment of units (for example recording fundamental units as
