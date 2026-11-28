@@ -306,7 +306,9 @@ request.
 - **Handshake:** protocol version and build commit are exchanged; the build
   commit is also reported in status and at startup (F12).
 - Errors and logs carry full context, and decisions are logged as
-  structured events (F8, F19). One executable with subcommands (F11).
+  structured events (F8, F19). One executable with subcommands for the validator
+  and its tools (F11); the reference miner and wallet are separate programs on a shared
+  library (2026-11-28, `a3.2-plan.md`).
 
 ### A3.1 implementation notes (2026-11-24)
 
