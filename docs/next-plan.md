@@ -28,8 +28,9 @@ Two consequences shape the plan:
   rings through its frontier F, supplies certified primes to the layers
   above, and anchors them through `extension_root`.
 - **Rings layer:** the ring registry (F-proofs with commit–reveal and
-  discoverer attribution), plus one field chain per opened ring, which
-  records how each main-chain prime factors in that ring.
+  discoverer attribution), and one extension chain (two chains in all,
+  agreed 2026-11-28), where each opened ring records how each main-chain prime
+  factors in it; a ring's records are linked per ring as an index.
 - **Evidence and privacy:** class groups and supersingular curves, which
   later enable privacy.
 
@@ -39,7 +40,7 @@ Two consequences shape the plan:
 |---|---|---|
 | 1 | **A1 Main-chain design:** block format (Merkle roots, `extension_root`, reserved privacy roots), segment submissions sliced at primes, evidence rule, two-phase any-quorum consensus with growing timeouts, signing domains, versioned types, reward as a function | **B1 Rings design:** registry (commit–reveal, discoverer, fees), field-chain format, anchoring. Quadratic first |
 | 2–4 | **A2 Core engine:** one in-memory state with incremental updates; prime-block storage and index; segment checking with the sieve rule; deterministic slicing; replay reproducing v1 reward accounting; v1 features ported. Target < 200 MB of memory | **B2 Cubic and quartic certificates:** Dedekind–Kummer, O_K certification, canonical field identity |
-| 4–6 | **A3 Consensus and network:** two-phase rounds, locks persisted before votes are sent, growing timeouts, equivocation evidence, process tests from the model scenarios; 3 local processes, then the 3 servers on 9339–9341 | **B3 Rings on chain:** registry and field chains wired into the engine through `extension_root`, using the same consensus, batched |
+| 4–6 | **A3 Consensus and network:** two-phase rounds, locks persisted before votes are sent, growing timeouts, equivocation evidence, process tests from the model scenarios; 3 local processes, then the 3 servers on 9339–9341 | **B3 Rings on chain:** registry and the extension chain wired into the engine through `extension_root`, using the same consensus, batched |
 | 6–8 | **A4 + B4 Invited testnet:** main chain plus quadratic rings from day one; segment-miner client; proof-carrying query API; multi-day rehearsal next to v1, measured against the baseline | |
 | later | Public-launch preparation: v1 balance migration and swap | **B5 Evidence expansion:** class groups, supersingular curves and isogeny graphs (p = 419 first), Diophantine searches; ceremonies for trusted public parameters (`ceremonies.md`); a web fallback with rewards. **B6 Privacy activation:** stealth addresses, then ring signatures, when the certified evidence allows |
 
@@ -53,7 +54,7 @@ main chain.
 - **A1:** evidence rule A/B/C; segment cap K; several miners per decision;
   stating "3 validators = crash-tolerant" plainly.
 - **A2:** memory budget.
-- **B1:** commit–reveal parameters; refundable fee; discoverer share.
+- **B1:** commit–reveal parameters; refundable deposit; discoverer share.
 - **B2/B3:** eligibility rule (Minkowski or Bach); canonical identity.
 - **B5/B6:** which evidence earns rewards; security threshold for privacy
   activation.

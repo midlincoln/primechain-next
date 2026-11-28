@@ -21,13 +21,12 @@ Order: B3.1 and B3.2 are independent; then B3.3, B3.4, B3.5, B3.6, B3.7.
 
 ## To settle inside the steps (proposed, not agreed)
 
-1. **Backlog rule (proposed):** for a prime older than ring j, the rings that count are
-   those open when ring j opened, including j; times parameter 19. It depends on chain
-   data only, so there is no race. Budget as of the prime's own block.
+1. **Backlog rule (proposed, built in B3.5):** a prime is older than a ring if its
+   block came before the ring's opening block; it pays parameter 19 of v (rule A4).
+   It depends on chain data only, so there is no race.
 2. **Counting rings:** paused rings count as open (proposed), so a pause does not move
    money to the others.
-3. **Integer weights:** w_j = floor(2^32 / j^e) with a fixed integer root (proposed).
-   e is limited to fractions with small denominators.
+3. **Integer weights:** not needed under rule A4 (they belonged to rule A3).
 4. **Batch frequency:** at most one between two main decisions (R1); after a ring batch
    the proposer turns to main work first (proposed).
 5. **Main-chain balances** also get a history, so one rule serves all assets.

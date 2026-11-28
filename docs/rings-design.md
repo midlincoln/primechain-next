@@ -7,8 +7,12 @@ Status: in progress. Decisions are recorded as they are agreed. Plan:
 
 - **Ring registry:** records ring openings (certificates and discoverers),
   using commit–reveal.
-- **Field chains:** one per opened ring. Each records, for every main-chain
-  prime in order, how that prime factors in the ring (with generators).
+- **Two chains, main and extensions (agreed 2026-11-28):** the main chain (the clock
+  and the ledger) and one extension chain (the rings file) holding the ring batches in
+  decision order. For every main-chain prime in order, each opened ring records how
+  that prime factors in it (with generators). A ring's blocks link to that ring's
+  previous block: this is an index inside the extension chain (order check, proofs for
+  one ring, pause and history per ring), not a chain with its own consensus or ledger.
 - **Discoverer:** earns a share of the ring's own issuance. The main chain's
   reward split (D8) is unchanged.
 - **Ring assets:** held and transferred on the main ledger, like main-chain
@@ -17,7 +21,7 @@ Status: in progress. Decisions are recorded as they are agreed. Plan:
 ### Protocol messages (versioned, D12)
 
 1. `RING_COMMIT`: discoverer address, commitment = hash(certificate ‖ address
-   ‖ salt), refundable fee, signature.
+   ‖ salt), refundable deposit (parameter 27), minimum fee (parameter 5), signature.
 2. `RING_REVEAL`: the commitment it answers, the salt, and the certificate
    (field identity D, claimed eligibility prime F, factorization of |D|,
    generators). Validators check, in order:
@@ -27,14 +31,17 @@ Status: in progress. Decisions are recorded as they are agreed. Plan:
    4. the certificate verifies;
    5. the ring is not open yet. The earliest revealed commitment wins, and the
       ring opens once no earlier commitment is still sealed (R5).
-3. `FIELD_ENTRY`: ring ID, main-chain prime q (the ring's next one, in order),
-   decomposition type, generators, provider, signature.
+3. `RING_WORK`: ring ID, miner, start prime, segments of rows in order of the
+   main-chain prime (R7), signature; format in `ring-records.md`. It replaced the
+   one-entry-per-prime `FIELD_ENTRY` (2026-11-25).
 
 ## Decided
 
-### R1. Structure: a DAG of ring chains (2026-11-23)
+### R1. Structure: two chains, main and extensions (2026-11-23, wording 2026-11-28)
 
-- Each ring has its own chain. A ring block contains: ring ID, previous ring
+- **Two chains (agreed 2026-11-28):** main and extensions. Consensus, finality and
+  money are shared with the main chain; the per-ring links below are an index inside
+  the extension chain. A ring block contains: ring ID, previous ring
   block hash, `depends_on` (the hash of the main-chain block that finalized
   the prime(s) it records), the entries, and the validators' signatures.
 - **One consensus sequence, two files (agreed 2026-11-25,** replacing "final on
@@ -54,7 +61,7 @@ Status: in progress. Decisions are recorded as they are agreed. Plan:
 - **Protection of the main chain:** a prime can always close without a ring
   batch; at most one ring batch between two main decisions, with a size limit;
   validators can pause one ring or all rings (R2).
-- Example: q = 13 splits in Q(√17). The miner submits `FIELD_ENTRY` (generator
+- Example: q = 13 splits in Q(√17). The miner submits a `RING_WORK` segment with the row for 13 (generator
   (a + b√17)/2 of norm ±13). Validators check that 13 is final on the main
   chain with 13 ≤ F, that the rows of its segment are correct and complete (R7,
   R9), the norm equation, and uniqueness (R10). It becomes Q(√17)'s next
@@ -75,7 +82,7 @@ Reserve Banks do:
   The discoverer share accrues while mining is not paused.
 - **Notice:** gate changes take effect only after a notice period of N blocks
   following the finalized vote, so miners can predict the rules (Nash
-  credibility). N is a policy constant to be set.
+  credibility). N is parameter 11 (100 blocks to start).
 - **Exception:** an **emergency pause** of a single ring takes effect
   immediately, and only if its verifier is shown to be faulty. It is recorded
   on chain. An **emergency pause of all rings** works the same way
@@ -142,10 +149,11 @@ frontier. The same rule applies to real and imaginary fields, with no π.
   waits, at most until 10 blocks after its own commit. Only commits before it can
   delay it; commits in one block count in their order in the block. If several
   revealed commits name the same ring, the earliest gets it.
-- A small **refundable fee** accompanies the commit. It is returned with a
-  valid reveal (also when an earlier commit gets the ring) and kept if the reveal
-  is invalid or missing (anti-spam).
-- Field entries and main-chain ranges do not use commit–reveal: each prize is
+- A **refundable deposit** (parameter 27, a policy tool) and the minimum fee
+  (parameter 5, not refunded) accompany the commit. The deposit is returned with a
+  valid reveal (also when an earlier commit gets the ring) and goes to the fee pool
+  if the commit expires without one (anti-spam).
+- Ring rows and main-chain ranges do not use commit–reveal: each prize is
   small, and copies are handled by arrival order (D4) and one entry per q per
   ring (R10). This can be strengthened later if copying is observed.
 
@@ -162,7 +170,7 @@ Each ring's registry record carries:
   `RING_LIEN` with a mortgage type (default) and an annuity type ("Lending: rings
   are land" in `monetary-layer.md`);
 - **reward schedule:** a type plus parameters (founder share y, decay kind
-  and rate, budget), **copied from the validators' current policy when the
+  and rate, value of a ring prime), **copied from the validators' current policy when the
   ring is registered and fixed for that ring afterwards**. Validators may
   change the policy for future rings only, with notice. Existing ring bonds
   keep their terms.
@@ -358,14 +366,14 @@ Replaces payout records and claims (agreed earlier the same day).
 - **Ties (reviewed 2026-11-23):** there is no global arrival order and there
   are no timestamps. Main-chain range ties (same end) are settled by the
   round proposer's choice plus the vote (D4). Ring certificates go to the
-  earliest finalized commit (R5). Field entries: one per q per ring (R10); if
+  earliest finalized commit (R5). Ring rows: one per q per ring (R10); if
   two compete, the proposer's choice plus the vote decides. A content-hash
   tie-break without sealed commits was rejected, because a copier could grind
   a lower hash.
 
 ## Open
 
-- Reveal window length; commit fee amount and refund rule.
 - Ring issuance: starting rule and parameters in `protocol-parameters.md`; the
-  backlog rule is open.
+  backlog rule is proposed (B3.5: a prime is older than a ring if its block came
+  before the ring's opening block), to agree.
 - Canonical field identity for degree ≥ 3, and names of ring primes there.
