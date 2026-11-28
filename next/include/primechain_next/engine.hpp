@@ -2,6 +2,7 @@
 // In-memory main-chain engine (A2.1 + A2.2). One authoritative state, updated incrementally;
 // nothing is reloaded per request (see docs/v1-baseline-measurements.md). Optional persistence
 // (D19) appends every sealed block to a Store and snapshots the state every K blocks.
+#include "primechain_next/assets.hpp"
 #include "primechain_next/model.hpp"
 #include "primechain_next/parameters.hpp"
 #include "primechain_next/store.hpp"
@@ -55,6 +56,11 @@ public:
     std::size_t pendingTransferCount() const { return pending_transfers_.size(); }
     Amount balance(const Address& address, const Integer& asset) const;
     Amount feePoolBalance(const Integer& asset) const;  // validator fee pool (D16)
+    // B3.3: balances are kept in the asset ledger, with an ownership history (b3-plan item 5),
+    // so main-chain primes and ring primes follow one rule.
+    const AssetLedger& assets() const { return ledger_; }
+    // R6, rule 4: the terms a ring opened in block `height` gets from the parameters in force.
+    RingTerms ringTermsAt(std::uint64_t height) const;
     std::uint64_t nonce(const Address& address) const; // last used nonce (0 = none yet)
     const std::vector<ValidatorRecord>& validators() const { return validators_; }
     Hash256 validatorSetDigest() const { return validatorEpochDigest(); }
@@ -149,8 +155,6 @@ private:
                        std::string& error) const;
     bool distinctPrimeFactors(const Integer& n, std::vector<Integer>& out, std::string& error) const;
     void applyAccepted(const AcceptedRange& range);
-    void credit(std::map<Address, Amount>& holders, const Address& address, const Amount& amount);
-    void creditPool(std::map<Integer, Amount>& pool, const Integer& asset, const Amount& amount);
     void distributePools();
     void refreshAssetHash(const Integer& asset);
     Hash256 validatorEpochDigest() const;
@@ -191,8 +195,7 @@ private:
     std::uint64_t arrivals_{0};
     std::set<Integer> primes_;
     std::map<Integer, Integer> divisors_;                     // composite -> recorded divisor
-    std::map<Integer, std::map<Address, Amount>> balances_;   // asset (prime) -> address -> amount
-    std::map<Integer, Amount> fee_pool_;                      // asset -> validator fee pool
+    AssetLedger ledger_;                                      // balances with history, fee pool (B3.3)
     std::map<Integer, Hash256> asset_hashes_;
     std::map<Address, Bytes> keys_;                           // address -> public key (registered once)
     std::map<Address, std::uint64_t> nonces_;                 // sender -> last used nonce

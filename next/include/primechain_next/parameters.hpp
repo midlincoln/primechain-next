@@ -28,7 +28,7 @@ enum class Param : std::uint32_t {
     TimeoutCapMs = 11,          // [13] round timeout cap (D11)
     CheckpointInterval = 12,    // [14] permanent certificate every K blocks (A3-3)
     CertificateWindow = 13,     // [14] all certificates of the last W blocks (A3-3)
-    RingBudget = 14,            // [17] ring budget per main-chain prime (not used yet)
+    RingPrimeValue = 14,        // [17] value of a new ring prime, e * v per prime (rule A4; was the A3 budget)
     RingWeightExpNum = 15,      // [18] weight 1/j^(num/den) of ring j
     RingWeightExpDen = 16,      // [18]
     RingBacklogShareBp = 17,    // [19] share paid for primes older than the ring

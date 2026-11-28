@@ -200,6 +200,43 @@ from `gen_quadratic_vectors_v2.gp`): 351 certificates (342 real with a unit), 99
 refused, 6,520 corrupted certificates refused; 681 segments with 2,414 rows and 2,342 new
 ring primes; 7,214 corrupted segments and 34,473 malformed encodings refused.
 
+## B3.3: assets and awards (R13)
+
+`assets.hpp/.cpp`: the asset ledger. An asset is (ring, q, i); main-chain prime p is (0, p, 0).
+Ring awards are computed from the rows and never written:
+owned(X, a) = due from the row + received − sent, where the upstream part counts what a held
+at the end of block h − 1 (`ring-records.md`, section 4).
+
+- **Ownership history** per asset and address: a list (block, net). A new entry replaces the
+  last one unless the asset paid something (was below a row) after it; entries that change
+  nothing are dropped. Rows of a block are recorded before anything moves in that block.
+- **Main-chain balances use the same ledger** (b3-plan item 5): the Engine keeps no separate
+  balance map; `Engine::assets()` exposes it, the snapshot and the per-asset state hashes come from
+  it. Transfers still name main primes (`Integer`); the asset field becomes (ring, q, i) when rows
+  reach the chain (B3.5). With no rows every history has one entry, so nothing grows.
+- **Awards (R11, A4):** a ring prime with index e issues e·v (v = `RingPrimeValue`, parameter 14,
+  100,000, fixed per ring at opening: `Engine::ringTermsAt(h)`); miner 50%, founder's payee at h
+  15%, 35% upstream: holders of a ring prime keep half, the rest goes in equal parts to the primes
+  below, a main-chain prime keeps all. The part reaching 2 or 3 goes to the validators active at
+  h. Units in the fee pool earn nothing; rounding remainders are never issued.
+- **Spending:** every debited asset must exist and be owned (awards included); refusals: unknown
+  asset, amount, not enough.
+
+Tests (`ctest -R next_assets`):
+
+| Test | What it checks |
+|---|---|
+| `next_assets` | asset names and encoding; history replace/append; rows refused (unknown ring, q not on chain or too new, twice, after the block's transfers, missing or too new primes below, e = 0); awards (miner, founder, payee changes, pro-rata 35%, validators for 2 and 3 with remainder, pool earns nothing, two ring levels and two embeddings); refused spending; snapshot round trip, every truncation refused |
+| `next_assets_alice` | the three Alice/Ovanes cases of `spend_test.py`, natively, under A4 (v = 100,000) and with v = 500,000: who gets the award, the seller left with nothing, 4 of 7 transfers refused in the block after the split, restart and replay, the pay-at-once ledger alongside |
+| `next_assets_spend` | replays all 8 runs of `spend_test.py` (3 scenarios, 5 random seeds, 2,935 blocks, 354 restarts) from `experiments/nested_rings/spend_vectors.txt` (`export_spend_vectors.py`): 8,490 accepted and 11,404 refused transfers decided as in Python; 83,968 balances equal to Python's pay-at-once ledger (sha3 of all lines) and to a C++ one, to the last unit; rounding loss and total issue equal; quadratic row shapes checked against the Kronecker symbol |
+
+Choices left open by the docs (proposed): parts to several primes below are equal with the
+remainder to the first (as D17); a prime below must come from an earlier block than the row
+("lower rings first"); no validators at h means the 2/3 part is not issued; a main prime with
+nominal issue 0 (2 and 3) counts as having no holders; zero moves are not recorded; the ledger's
+`spend` requires debits to equal credits plus fee per asset. The issuance backlog (parameter 19)
+is left to B3.5: the ledger takes v·e per prime as given.
+
 ## Deferred
 
 - **Monetary layer:** reserves, loans, banks.

@@ -429,6 +429,12 @@ void transferTests() {
     require(e.balance(A.address, asset) == *before.sub(Amount(51)), "sender debited inputs");
     require(e.feePoolBalance(asset) == *fee_pool_before.add(Amount(1)), "fee reaches the validator fee pool");
     require(e.nonce(A.address) == 1, "nonce advanced");
+    // B3.3: balances live in the asset ledger, as (0, p, 0) with a history (b3-plan item 5).
+    require(e.assets().owned(AssetId::main(asset), A.address) == e.balance(A.address, asset) &&
+                e.assets().pool(AssetId::main(asset)) == e.feePoolBalance(asset) &&
+                e.assets().issued(AssetId::main(asset)) == Amount(1000000) && e.assets().issued(AssetId::main(Integer(2))) == Amount{} &&
+                e.assets().exists(AssetId::main(asset)) && !e.assets().exists(AssetId{1, asset, 0}),
+            "main-chain balances in the asset ledger; 2 and 3 have no holders");
 
     // Rejections at submission.
     auto rejected = [&](Transfer t, const std::string& what, bool resign = true) {
@@ -469,7 +475,8 @@ void transferTests() {
 
     // Replay with transfers; a tampered transfer amount is detected.
     auto replayed = Engine::replay(policy, e.blocks(), error);
-    require(replayed && replayed->stateRoot() == e.stateRoot() && replayed->tip() == e.tip(), "replay with transfers: " + error);
+    require(replayed && replayed->stateRoot() == e.stateRoot() && replayed->tip() == e.tip() && replayed->assets() == e.assets(),
+            "replay with transfers: " + error);
     auto tampered = e.blocks();
     for (auto& blk : tampered)
         if (!blk.transfers.empty()) { blk.transfers[0].outputs[0].amount = Amount(11); break; }
@@ -716,6 +723,10 @@ void parameterTests() {
                         pid(s.id) == pid(Param::EpochLength),
                     "past values unchanged");
         require(e.parameterAt(Param::GovernanceNotice, 1) == 3 && e.parameterAt(Param::EpochLength, 1) == 1000, "genesis values kept");
+        // R6 rule 4: a ring takes its terms from the table in force at its opening block (B3.3).
+        require(e.ringTermsAt(effective - 1).prime_value == 100000 && e.ringTermsAt(effective).prime_value == 100001 &&
+                    e.ringTermsAt(effective).upstream_bp == e.parameter(Param::RingUpstreamShareBp),
+                "ring terms follow the table, never retroactively");
         const auto& b = e.blocks();
         require(b[effective - 2].header.policy_digest == parametersDigest(e.parameters().valuesAt(effective - 1)) &&
                     b[effective - 2].header.policy_digest != parametersDigest(e.parameters().valuesAt(effective)),

@@ -25,7 +25,7 @@ const std::vector<ParamSpec> kSpecs = {
     {Param::TimeoutCapMs, "round timeout cap (ms)", 1, 3600000, 60000},
     {Param::CheckpointInterval, "certificate checkpoint interval (blocks)", 1, 1000000000, 1000},
     {Param::CertificateWindow, "certificate window (blocks)", 1, 1000000000, 1000},
-    {Param::RingBudget, "ring budget per main-chain prime", 0, kMaxMoney, 1000000},
+    {Param::RingPrimeValue, "value of a new ring prime (A4)", 0, kMaxMoney, 100000},
     {Param::RingWeightExpNum, "ring weight exponent numerator", 0, 16, 1},
     {Param::RingWeightExpDen, "ring weight exponent denominator", 1, 16, 2},
     {Param::RingBacklogShareBp, "ring backlog share (bp)", 0, kBp, 1000},

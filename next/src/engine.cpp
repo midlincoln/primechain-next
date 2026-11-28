@@ -75,24 +75,32 @@ Engine::Engine(Policy policy, Genesis genesis) : policy_(std::move(policy)), val
                                                     : sha3(a.consensus_key) < sha3(b.consensus_key);
     });
     genesis_digest_ = validatorEpochDigest();
-    // D7: genesis seeds the primes 2 (#1) and 3 (#2), with no rewards.
+    std::vector<Address> payouts;
+    for (const auto& v : validators_) payouts.push_back(v.payout_address);
+    ledger_.setValidators(0, payouts);
+    // D7: genesis seeds the primes 2 (#1) and 3 (#2), with no rewards (nominal issue 0: no holders).
     for (const unsigned long p : {2ul, 3ul}) {
         chain_frontier_ = accepted_frontier_ = Integer(p);
         primes_.insert(Integer(p));
+        std::string error;
+        if (!ledger_.addMainPrime(Integer(p), height_ + 1, Amount{}, error)) throw std::logic_error(error);
         sealBlock(Integer(p), std::nullopt);
     }
 }
 
 Amount Engine::balance(const Address& address, const Integer& asset) const {
-    const auto a = balances_.find(asset);
-    if (a == balances_.end()) return Amount{};
-    const auto b = a->second.find(address);
-    return b == a->second.end() ? Amount{} : b->second;
+    return ledger_.owned(AssetId::main(asset), address);
 }
 
-Amount Engine::feePoolBalance(const Integer& asset) const {
-    const auto it = fee_pool_.find(asset);
-    return it == fee_pool_.end() ? Amount{} : it->second;
+Amount Engine::feePoolBalance(const Integer& asset) const { return ledger_.pool(AssetId::main(asset)); }
+
+RingTerms Engine::ringTermsAt(std::uint64_t height) const {
+    RingTerms t;
+    t.prime_value = parameterAt(Param::RingPrimeValue, height);
+    t.upstream_bp = parameterAt(Param::RingUpstreamShareBp, height);
+    t.founder_bp = parameterAt(Param::RingFounderShareBp, height);
+    t.kept_bp = parameterAt(Param::RingKeptDownBp, height);
+    return t;
 }
 
 std::uint64_t Engine::nonce(const Address& address) const {
@@ -165,20 +173,7 @@ std::size_t Engine::votesFor(const Hash256& id) const {
     return it == tallies_.end() ? 0 : it->second.voters.size();
 }
 
-void Engine::refreshAssetHash(const Integer& asset) {
-    Writer w;
-    w.text("primechain-next/asset");
-    w.integer(asset);
-    const auto it = balances_.find(asset);
-    w.varint(it == balances_.end() ? 0 : it->second.size());
-    if (it != balances_.end())
-        for (const auto& [address, amount] : it->second) {
-            w.text(address);
-            w.amount(amount);
-        }
-    w.amount(feePoolBalance(asset));
-    asset_hashes_[asset] = sha3(w.data());
-}
+void Engine::refreshAssetHash(const Integer& asset) { asset_hashes_[asset] = ledger_.assetDigest(AssetId::main(asset)); }
 
 bool Engine::checkSigned(const Bytes& payload, const Address& provider, const Bytes& key, const Bytes& signature,
                          std::string& error) const {
@@ -346,16 +341,17 @@ bool Engine::applyTransfer(const Transfer& t, std::string& error) {
     for (const auto& in : t.inputs)
         if (balance(t.sender, in.asset) < in.amount) { error = "insufficient balance in asset " + in.asset.get_str(); return false; }
     if (!t.public_key.empty() && !registerKey(t.sender, t.public_key, error)) return false;
-    std::set<Integer> touched;
-    for (const auto& in : t.inputs) {
-        Amount& slot = balances_[in.asset][t.sender];
-        slot = *slot.sub(in.amount);  // checked above
-        if (slot == Amount{}) balances_[in.asset].erase(t.sender);
-        touched.insert(in.asset);
-    }
-    for (const auto& out : t.outputs) credit(balances_[out.asset], out.receiver, out.amount);
-    creditPool(fee_pool_, t.fee_asset, t.fee);
+    // The form check made the inputs exactly the outputs plus the fee, per asset.
+    std::vector<std::pair<AssetId, Amount>> debits;
+    for (const auto& in : t.inputs) debits.emplace_back(AssetId::main(in.asset), in.amount);
+    std::vector<AssetLedger::Credit> credits;
+    for (const auto& out : t.outputs) credits.push_back({AssetId::main(out.asset), out.receiver, out.amount});
+    const SpendRefusal refused = ledger_.spend(t.sender, debits, credits, AssetId::main(t.fee_asset), t.fee, height_ + 1);
+    if (refused != SpendRefusal::None)
+        throw std::logic_error(std::string("ledger refused a checked transfer: ") + refusalText(refused));
     nonces_[t.sender] = t.nonce;
+    std::set<Integer> touched;
+    for (const auto& in : t.inputs) touched.insert(in.asset);
     for (const auto& asset : touched) refreshAssetHash(asset);
     return true;
 }
@@ -488,11 +484,15 @@ void Engine::activateScheduled(std::uint64_t height) {
         ready_.erase(id);
     }
     scheduled_ = std::move(later);
-    if (set_changed)
+    if (set_changed) {
         std::sort(validators_.begin(), validators_.end(), [](const ValidatorRecord& a, const ValidatorRecord& b) {
             return a.payout_address != b.payout_address ? a.payout_address < b.payout_address
                                                         : sha3(a.consensus_key) < sha3(b.consensus_key);
         });
+        std::vector<Address> payouts;  // ring shares of 2 and 3 go to the set active at the row's block (R11)
+        for (const auto& v : validators_) payouts.push_back(v.payout_address);
+        ledger_.setValidators(height, payouts);
+    }
 }
 
 // ---------------------------------------------------------------- closing prime, rewards, distribution
@@ -533,37 +533,12 @@ bool Engine::registerKey(const Address& address, const Bytes& key, std::string& 
     return true;
 }
 
-void Engine::credit(std::map<Address, Amount>& holders, const Address& address, const Amount& amount) {
-    Amount& slot = holders[address];
-    const auto sum = slot.add(amount);
-    if (!sum) throw std::overflow_error("balance overflow");
-    slot = *sum;
-}
-
-void Engine::creditPool(std::map<Integer, Amount>& pool, const Integer& asset, const Amount& amount) {
-    Amount& slot = pool[asset];
-    const auto sum = slot.add(amount);
-    if (!sum) throw std::overflow_error("pool overflow");
-    slot = *sum;
-}
-
 // D17: pay the fee pool out in equal shares to the validators' payout addresses (sorted order);
 // the remainder goes one unit each to the first validators in that order.
 void Engine::distributePools() {
-    if (validators_.empty()) return;  // no validators configured: the pool keeps accumulating
-    const u128 n = validators_.size();
-    std::set<Integer> touched;
-    for (auto& [asset, amount] : fee_pool_) {
-        if (amount == Amount{}) continue;
-        const u128 share = amount.raw() / n, remainder = amount.raw() % n;
-        for (std::size_t i = 0; i < validators_.size(); ++i)
-            if (const u128 paid = share + (i < remainder ? 1 : 0); paid != 0)
-                credit(balances_[asset], validators_[i].payout_address, Amount::fromRaw(paid));
-        amount = Amount{};
-        touched.insert(asset);
-    }
-    std::erase_if(fee_pool_, [](const auto& entry) { return entry.second == Amount{}; });
-    for (const auto& asset : touched) refreshAssetHash(asset);
+    std::vector<Address> payouts;  // none configured: the pool keeps accumulating
+    for (const auto& v : validators_) payouts.push_back(v.payout_address);
+    for (const auto& asset : ledger_.distributePool(payouts, height_ + 1)) refreshAssetHash(asset.q);
 }
 
 std::optional<Block> Engine::closeBlock(const PrimeSubmission& prime, std::string& error) {
@@ -618,13 +593,14 @@ std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, const 
     const std::uint64_t finder = total - composites_total;
     const std::uint64_t count = Integer(p - chain_frontier_ - 1).get_ui();
     const std::uint64_t share = composites_total / count;
-    auto& holders = balances_[p];
+    const AssetId asset = AssetId::main(p);
     for (const auto& range : open_ranges_) {
         const auto amount = Amount(share).mul(Integer(range.end - range.accepted_start + 1).get_ui());
         if (!amount) throw std::overflow_error("reward overflow");
-        credit(holders, range.provider, *amount);
+        ledger_.credit(asset, range.provider, *amount, height_ + 1);
     }
-    credit(holders, accepted.provider, Amount(finder + composites_total % count));
+    ledger_.credit(asset, accepted.provider, Amount(finder + composites_total % count), height_ + 1);
+    if (!ledger_.addMainPrime(p, height_ + 1, Amount(total), error)) return std::nullopt;  // issued(p), for ring awards
     refreshAssetHash(p);
 
     chain_frontier_ = p;
@@ -745,20 +721,7 @@ Bytes Engine::encodeState() const {
         w.integer(n);
         w.integer(d);
     }
-    w.varint(balances_.size());
-    for (const auto& [asset, holders] : balances_) {
-        w.integer(asset);
-        w.varint(holders.size());
-        for (const auto& [address, amount] : holders) {
-            w.text(address);
-            w.amount(amount);
-        }
-    }
-    w.varint(fee_pool_.size());
-    for (const auto& [asset, amount] : fee_pool_) {
-        w.integer(asset);
-        w.amount(amount);
-    }
+    ledger_.encode(w);  // balances with their history, and the fee pool (B3.3)
     w.varint(keys_.size());
     for (const auto& [address, key] : keys_) {
         w.text(address);
@@ -818,7 +781,7 @@ bool Engine::decodeState(const Bytes& data, std::string& error) {
     }
     validators_ = std::move(validators);
     blocks_.clear();
-    primes_.clear(); divisors_.clear(); balances_.clear(); fee_pool_.clear();
+    primes_.clear(); divisors_.clear(); ledger_ = AssetLedger{};
     keys_.clear(); nonces_.clear(); asset_hashes_.clear();
     if (!r.varint(height_) || !r.integer(chain_frontier_) || !r.integer(accepted_frontier_) || !r.hash(tip_) ||
         !r.varint(count))
@@ -834,29 +797,11 @@ bool Engine::decodeState(const Bytes& data, std::string& error) {
         if (!r.integer(n) || !r.integer(d)) return fail("bad divisor");
         divisors_.emplace(n, d);
     }
-    if (!r.varint(count)) return fail("bad balances");
+    std::string ledger_error;
+    if (!ledger_.decode(r, l.max_text, ledger_error)) return fail(ledger_error);
     std::set<Integer> assets;
-    for (std::uint64_t i = 0; i < count; ++i) {
-        Integer asset;
-        std::uint64_t holders = 0;
-        if (!r.integer(asset) || !r.varint(holders)) return fail("bad asset");
-        auto& map = balances_[asset];
-        for (std::uint64_t j = 0; j < holders; ++j) {
-            Address address;
-            Amount amount;
-            if (!r.text(address, l.max_text) || !r.amount(amount)) return fail("bad holder");
-            map.emplace(address, amount);
-        }
-        assets.insert(asset);
-    }
-    if (!r.varint(count)) return fail("bad fee pool");
-    for (std::uint64_t i = 0; i < count; ++i) {
-        Integer asset;
-        Amount amount;
-        if (!r.integer(asset) || !r.amount(amount)) return fail("bad fee pool entry");
-        fee_pool_.emplace(asset, amount);
-        assets.insert(asset);
-    }
+    for (const auto& x : ledger_.assets())
+        if (x.isMain()) assets.insert(x.q);
     if (!r.varint(count)) return fail("bad key registry");
     for (std::uint64_t i = 0; i < count; ++i) {
         Address address;

@@ -371,6 +371,7 @@ if(PRIMECHAIN_BUILD_NEXT)
         next/src/model.cpp
         next/src/parameters.cpp
         next/src/rings.cpp
+        next/src/assets.cpp
         next/src/engine.cpp
         next/src/store.cpp
         next/src/consensus.cpp
@@ -395,6 +396,14 @@ if(PRIMECHAIN_BUILD_NEXT)
     target_link_libraries(primechain-next-rings-tests PRIVATE primechain_next)
     target_compile_options(primechain-next-rings-tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME next_rings COMMAND primechain-next-rings-tests ${CMAKE_CURRENT_SOURCE_DIR}/experiments/extensions/quadratic_vectors_v2.txt)
+    add_executable(primechain-next-assets-tests next/tests/assets_tests.cpp)
+    set_target_properties(primechain-next-assets-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    target_link_libraries(primechain-next-assets-tests PRIVATE primechain_next)
+    target_compile_options(primechain-next-assets-tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME next_assets COMMAND primechain-next-assets-tests unit)
+    add_test(NAME next_assets_alice COMMAND primechain-next-assets-tests alice)
+    add_test(NAME next_assets_spend COMMAND primechain-next-assets-tests spend ${CMAKE_CURRENT_SOURCE_DIR}/experiments/nested_rings/spend_vectors.txt)
+    set_tests_properties(next_assets next_assets_alice next_assets_spend PROPERTIES TIMEOUT 600)
     add_executable(primechain-next-consensus-tests next/tests/consensus_tests.cpp)
     set_target_properties(primechain-next-consensus-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
     target_link_libraries(primechain-next-consensus-tests PRIVATE primechain_next)
