@@ -1,9 +1,9 @@
-// Tests for B3.5: mining rings (RING_WORK, segments, ring blocks and batches, issuance under rule
-// A4 with the backlog share, awards through the asset ledger, the rings file and the row index).
+// Tests for B3.5 and B3.6: mining rings (RING_WORK, segments, ring blocks and batches, issuance under rule
+// A4 with the backlog share, awards through the asset ledger, the rings file and the row index) and pausing.
 // Specification: docs/ring-records.md sections 3-5, docs/rings-design.md R7-R13,
 // docs/protocol-parameters.md (rule A4, parameter 65). Reference model and vectors:
 // experiments/ring_issuance/a4_rows.py -> a4_vectors.txt.
-// Usage: primechain-next-ring-mine-tests rows|compete|issuance|persistence <a4_vectors.txt>
+// Usage: primechain-next-ring-mine-tests rows|compete|issuance|persistence|pause <a4_vectors.txt>
 #include "primechain/crypto/signature.hpp"
 #include "primechain_next/engine.hpp"
 #include "primechain_next/merkle.hpp"
@@ -1202,17 +1202,291 @@ void persistenceTests(const Vectors& vec) {
     std::cout << "ring persistence: " << checks << " checks passed\n";
 }
 
+
+// ---------------------------------------------------------------- B3.6: pausing (R2, parameter 36)
+GovernanceTx voteOn(const Engine& e, const Val& val, GovernanceProposal p) {
+    p.network_id = e.policy().network_id;
+    p.validator_set_digest = e.validatorSetDigest();
+    if (p.expiry_height == 0) p.expiry_height = e.height() + 20;
+    GovernanceTx t;
+    t.kind = GovernanceTxKind::Vote;
+    t.proposal = p;
+    t.signer_key = val.consensus.key.public_key;
+    t.signature = sign(val.consensus, governanceSigningPayload(t));
+    return t;
+}
+
+// One segment of ring `ring` (identity d) from its next prime, by m.
+RingWork nextWork(const Engine& e, const Vectors& vec, const Miner& m, std::uint64_t ring, long d) {
+    const std::uint64_t start = nextPrime(e.rings().ring(ring)->frontier.get_ui());
+    return makeWork(e, m, d, makeSegments(vec, d, start, 1), !e.hasKey(m.address));
+}
+
+bool batchTouches(const Engine::RingBatchValue& v, std::uint64_t ring) {
+    for (const auto& b : v.batch.blocks)
+        if (b.ring == ring) return true;
+    return false;
+}
+
+void pauseTests(const Vectors& vec) {
+    std::string error;
+    const std::string root = tempDir("pause");
+    const std::string dir = root + "/chain";
+    const Miner A = newMiner(), B = newMiner(), D = newMiner();
+    Policy policy;
+    policy.governance_notice = 3;
+    policy.snapshot_interval = 5;
+    const Val val = newVal(policy.network_id);
+    Genesis genesis;
+    genesis.validators.push_back(val.record);  // one validator: its vote is a quorum
+    std::optional<Engine> opened = Engine::open(dir, policy, genesis, error);
+    require(opened.has_value(), "open: " + error);
+    auto reopen = [&](const std::string& what) {
+        const Hash256 tip = opened->tip(), state = opened->stateRoot();
+        const RingRegistry registry = opened->rings();
+        opened.reset();
+        opened = Engine::open(dir, policy, genesis, error);
+        require(opened && opened->tip() == tip && opened->stateRoot() == state && opened->rings() == registry,
+                what + ": restart gives the same state: " + error);
+    };
+    for (int k = 0; opened->height() < 20; ++k) closeNext(*opened, k % 2 ? A : B, k % 2 ? B : A);
+    const std::uint64_t g4 = openRing(*opened, A, B, certificate(vec, -4), 1);
+    const std::uint64_t g7 = openRing(*opened, B, A, certificate(vec, -7), 2);
+    while (opened->height() < 40) closeNext(*opened, A, B);
+    std::uint64_t sequence = 0;
+    std::size_t waited = 0;
+
+    // 1. Pause one ring with notice (RingPause): mined during the notice, refused after it; the
+    //    pause state is in the ring record and so in extension_root; a restart during the notice.
+    {
+        Engine& e = *opened;
+        GovernanceProposal p;
+        p.kind = GovernanceKind::RingPause;
+        p.ring = 0;
+        p.sequence = ++sequence;
+        require(!e.submitGovernance(voteOn(e, val, p), error) && error.find("names a ring") != std::string::npos,
+                "a ring pause names a ring");
+        p.ring = g4;
+        require(e.submitGovernance(voteOn(e, val, p), error), "pause vote: " + error);
+        closeNext(e, A, B);
+        require(e.scheduledChanges() == 1 && !e.rings().ring(g4)->paused, "scheduled, not yet in force");
+        reopen("during the notice");
+    }
+    while (!opened->rings().ring(g4)->paused) {
+        Engine& e = *opened;
+        require(e.submitRingWork(nextWork(e, vec, D, g4, -4), error), "work during the notice: " + error);
+        require(batchTouches(mineBatch(e), g4), "ring 1 is mined during the notice");
+        closeNext(e, A, B);
+        require(++waited < 10, "the pause takes effect");
+    }
+    {
+        Engine& e = *opened;
+        require(waited == 2, "in force after the notice of 3 blocks (two batches in between)");
+        const RingWork w4 = nextWork(e, vec, D, g4, -4), w7 = nextWork(e, vec, D, g7, -7);
+        require(e.submitRingWork(w4, error) && e.submitRingWork(w7, error), "works queued: " + error);
+        refused(e, handValue(e, g4, w4, 0, 1), "ring is paused", "a batch touching the paused ring");
+        const auto v = mineBatch(e);
+        require(!batchTouches(v, g4) && batchTouches(v, g7), "the proposer leaves the paused ring out");
+        require(e.pendingRingWorkCount() == 1, "the paused ring's work stays queued");
+        const Block b = closeNext(e, A, B);
+        require(b.header.extension_root == extensionRootOf(e, b) && e.rings().ring(g4)->paused,
+                "extension_root covers the pause state");
+        require(e.rings().rings().size() == 2 && e.assets().ring(g4) != nullptr,
+                "a paused ring still counts as open (proposal: no money moves to the others)");
+    }
+    // 2. Unpause with notice: the queued work is mined again.
+    {
+        Engine& e = *opened;
+        GovernanceProposal p;
+        p.kind = GovernanceKind::RingPause;
+        p.ring = g4;
+        p.pause = false;
+        p.sequence = ++sequence;
+        require(e.submitGovernance(voteOn(e, val, p), error), "unpause vote: " + error);
+        closeNext(e, A, B);
+        for (waited = 0; e.rings().ring(g4)->paused; ++waited) {
+            require(!e.buildRingBatch(), "nothing to mine while ring 1 is paused (ring 2 has no work)");
+            closeNext(e, A, B);
+        }
+        require(waited == 2, "unpaused after the notice");
+        require(batchTouches(mineBatch(e), g4), "the queued work of ring 1 is mined after the unpause");
+        closeNext(e, A, B);
+    }
+    // 3. Emergency pause of one ring: in force from the next block; it needs the hash of a fault
+    //    report; an unknown ring is not included; it is undone only with notice.
+    {
+        Engine& e = *opened;
+        GovernanceProposal p;
+        p.kind = GovernanceKind::EmergencyPause;
+        p.ring = g7;
+        p.sequence = ++sequence;
+        require(!e.submitGovernance(voteOn(e, val, p), error) && error.find("fault report") != std::string::npos,
+                "an emergency pause needs its fault report");
+        p.ring = 99;
+        p.evidence = sha3(Bytes{'n', 'o'});
+        require(e.submitGovernance(voteOn(e, val, p), error), "form only: " + error);
+        require(closeNext(e, A, B).governance.empty(), "an emergency pause of an unknown ring is not included");
+        p.ring = g7;
+        p.evidence = sha3(Bytes{'f', 'a', 'u', 'l', 't'});
+        require(e.submitGovernance(voteOn(e, val, p), error), "emergency vote: " + error);
+        const Block b = closeNext(e, A, B);
+        require(b.governance.size() == 1 && b.governance[0].proposal.evidence == p.evidence,
+                "recorded on chain with the fault report's hash");
+        require(e.rings().ring(g7)->paused, "in force from the next block, without notice");
+        const RingWork w7 = nextWork(e, vec, D, g7, -7);
+        require(e.submitRingWork(w7, error) && e.submitRingWork(nextWork(e, vec, D, g4, -4), error), "works: " + error);
+        refused(e, handValue(e, g7, w7, 0, 1), "ring is paused", "a batch touching the emergency-paused ring");
+        const auto v = mineBatch(e);
+        require(batchTouches(v, g4) && !batchTouches(v, g7), "the other ring is still mined");
+        closeNext(e, A, B);
+        p = {};
+        p.kind = GovernanceKind::RingPause;
+        p.ring = g7;
+        p.pause = false;
+        p.sequence = ++sequence;
+        require(e.submitGovernance(voteOn(e, val, p), error), "unpause vote: " + error);
+        closeNext(e, A, B);
+        for (waited = 0; e.rings().ring(g7)->paused; ++waited) closeNext(e, A, B);
+        require(waited == 2, "an emergency pause is undone with notice");
+        require(batchTouches(mineBatch(e), g7), "ring 2 mined again");
+        closeNext(e, A, B);
+    }
+    reopen("after the emergency pause");
+    // 4. Pause of all rings with notice (parameter 36), then unpause with notice. Blocks under the
+    //    pause have no ring batch and do not count toward the reveal window (R5): commit X (index 0)
+    //    is revealed after its nominal window and opens; Y (index 1) expires 3 blocks late.
+    std::uint64_t hc = 0;
+    {
+        Engine& e = *opened;
+        const Bytes sx = salt(0x31), sy = salt(0x32), cx = certificate(vec, -3), cy = certificate(vec, -8);
+        require(e.submitRingCommit(makeCommit(e, A, sx, cx, fundedAsset(e, A)), error), "commit X: " + error);
+        require(e.submitRingCommit(makeCommit(e, B, sy, cy, fundedAsset(e, B)), error), "commit Y: " + error);
+        const Block cb = closeNext(e, A, B);
+        hc = cb.header.height;
+        require(cb.ring_commits.size() == 2 && e.rings().commit(hc, 0)->expires_after == hc + 10, "two commits, window 10");
+        GovernanceProposal p;
+        p.kind = GovernanceKind::ParamChange;
+        p.changes = {{pid(Param::RingsPaused), 0, 1}};
+        p.sequence = ++sequence;
+        require(e.submitGovernance(voteOn(e, val, p), error), "pause-all vote: " + error);
+        closeNext(e, A, B);  // hc + 1: quorum; in force from hc + 4
+        while (!e.ringsPausedAt(e.height() + 1)) closeNext(e, A, B);
+        const std::uint64_t hp = e.height() + 1;
+        require(hp == hc + 4, "pause of all rings in force after the notice");
+        require(e.submitRingWork(nextWork(e, vec, D, g4, -4), error), "work under the pause is queued: " + error);
+        require(e.submitRingReveal(makeReveal(hc, 0, sx, cx), error), "a reveal may be queued: " + error);
+        require(!e.buildRingBatch(), "no ring batch under a pause of all rings");
+        refused(e, handValue(e, g4, nextWork(e, vec, D, g4, -4), 0, 1), "all rings are paused", "a batch under the pause");
+        p = {};
+        p.kind = GovernanceKind::ParamChange;
+        p.changes = {{pid(Param::RingsPaused), 1, 0}};
+        p.sequence = ++sequence;
+        require(e.submitGovernance(voteOn(e, val, p), error), "unpause-all vote: " + error);
+        const Block first = closeNext(e, A, B);  // hp: the unpause has its quorum; in force from hp + 3
+        require(first.header.height == hp && e.lastRingBatchHeight() < hp && !e.rings().byId(quadraticRingId(Integer(-3))),
+                "the queued reveal waits: no batch in a paused block");
+        while (e.ringsPausedAt(e.height() + 1)) closeNext(e, A, B);
+        const std::uint64_t hu = e.height() + 1;
+        require(hu == hp + 3, "unpaused after the notice: 3 blocks under the pause");
+        require(e.rings().commit(hc, 0)->expires_after == hc + 13 && e.rings().commit(hc, 1)->expires_after == hc + 13,
+                "each paused block inside the window moves its end by one");
+        require(e.rings().byId(quadraticRingId(Integer(-3))) == nullptr, "X still waits");
+    }
+    // The queued reveal would go into the next batch: drop it by restarting (the mempool is not
+    // durable), then reveal X in the last block of the extended window.
+    reopen("under the pause of all rings");
+    {
+        Engine& e = *opened;
+        while (e.height() + 1 < hc + 13) closeNext(e, A, B);
+        require(e.rings().commit(hc, 0) && !e.rings().commit(hc, 0)->revealed, "X is still sealed at hc + 12 (past hc + 10)");
+        require(e.submitRingReveal(makeReveal(hc, 0, salt(0x31), certificate(vec, -3)), error), "reveal X at hc + 13: " + error);
+        closeNext(e, A, B);
+        const RingEntry* x = e.rings().byId(quadraticRingId(Integer(-3)));
+        require(x && x->opened == hc + 13 && x->founder == A.address, "X opens in the last block of its extended window");
+        require(e.rings().commit(hc, 1) != nullptr, "Y still sealed at hc + 13");
+        require(!e.submitRingReveal(makeReveal(hc, 1, salt(0x32), certificate(vec, -8)), error) &&
+                    error.find("expired") != std::string::npos,
+                "Y may not be revealed after hc + 13");
+        closeNext(e, A, B);
+        require(e.rings().commit(hc, 1) == nullptr, "Y expires at hc + 14, three blocks late");
+    }
+    // 5. Emergency pause of all rings: in force from the next block; unpaused with notice.
+    {
+        Engine& e = *opened;
+        GovernanceProposal p;
+        p.kind = GovernanceKind::EmergencyPause;
+        p.ring = 0;
+        p.evidence = sha3(Bytes{'a', 'l', 'l'});
+        p.sequence = ++sequence;
+        require(e.submitGovernance(voteOn(e, val, p), error), "emergency pause-all vote: " + error);
+        require(e.submitRingWork(nextWork(e, vec, D, g7, -7), error), "work: " + error);
+        mineBatch(e);  // the block of the vote still has its batch (decided before the vote's prime)
+        closeNext(e, A, B);
+        require(e.ringsPausedAt(e.height() + 1) && e.parameter(Param::RingsPaused) == 1, "all rings paused at once");
+        require(e.submitRingWork(nextWork(e, vec, D, g4, -4), error), "work: " + error);
+        require(!e.buildRingBatch(), "no batch under the emergency pause");
+        closeNext(e, A, B);
+        p = {};
+        p.kind = GovernanceKind::ParamChange;
+        p.changes = {{pid(Param::RingsPaused), 1, 0}};
+        p.sequence = ++sequence;
+        require(e.submitGovernance(voteOn(e, val, p), error), "unpause vote: " + error);
+        closeNext(e, A, B);
+        for (waited = 0; e.ringsPausedAt(e.height() + 1); ++waited) closeNext(e, A, B);
+        require(waited == 2, "unpaused after the notice");
+        require(batchTouches(mineBatch(e), g4), "mining resumes");
+        closeNext(e, A, B);
+    }
+    // 6. Replay from the two files is bit-identical; a restart gives the same state.
+    reopen("at the end");
+    {
+        const Hash256 tip = opened->tip(), state = opened->stateRoot();
+        const RingRegistry registry = opened->rings();
+        const AssetLedger ledger = opened->assets();
+        opened.reset();  // the store is read on its own
+        std::vector<Block> blocks;
+        std::vector<RingBatch> batches;
+        Store store;
+        require(store.open(dir, error), "store: " + error);
+        for (std::uint64_t i = 0; i < store.blockCount(); ++i) {
+            Bytes raw;
+            Block b;
+            require(store.read(i, raw, error) && decode(raw, b, policy.limits, error) && encode(b) == raw, "read block");
+            blocks.push_back(b);
+        }
+        for (std::uint64_t i = 0; i < store.rings().count(); ++i) {
+            Bytes raw;
+            RingBatch b;
+            require(store.rings().read(i, raw, error) && decode(raw, b, policy.limits.max_text, error) && encode(b) == raw,
+                    "read ring batch");
+            batches.push_back(b);
+        }
+        auto replayed = Engine::replay(policy, genesis, blocks, batches, error);
+        require(replayed && replayed->tip() == tip && replayed->stateRoot() == state && replayed->rings() == registry &&
+                    replayed->assets() == ledger,
+                "replay from the two files: " + error);
+        for (std::size_t i = 0; i < blocks.size(); ++i)
+            require(encode(replayed->blocks()[i]) == encode(blocks[i]), "blocks bit-identical");
+        for (std::size_t i = 0; i < batches.size(); ++i)
+            require(encode(replayed->ringBatches()[i]) == encode(batches[i]), "ring batches bit-identical");
+        std::cout << "  " << blocks.size() << " blocks, " << batches.size() << " ring batches replayed\n";
+    }
+    fs::remove_all(root);
+    std::cout << "ring pausing: " << checks << " checks passed\n";
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     try {
-        if (argc < 3) throw std::runtime_error("usage: primechain-next-ring-mine-tests rows|compete|issuance|persistence <a4_vectors.txt>");
+        if (argc < 3) throw std::runtime_error("usage: primechain-next-ring-mine-tests rows|compete|issuance|persistence|pause <a4_vectors.txt>");
         const std::string mode = argv[1];
         const Vectors vec = load(argv[2]);
         if (mode == "rows") rowTests(vec);
         else if (mode == "compete") competeTests(vec);
         else if (mode == "issuance") issuanceTests(vec);
         else if (mode == "persistence") persistenceTests(vec);
+        else if (mode == "pause") pauseTests(vec);
         else throw std::runtime_error("unknown mode " + mode);
         return 0;
     } catch (const std::exception& e) {

@@ -419,7 +419,7 @@ if(PRIMECHAIN_BUILD_NEXT)
     set_target_properties(primechain-next-ring-mine-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
     target_link_libraries(primechain-next-ring-mine-tests PRIVATE primechain_next)
     target_compile_options(primechain-next-ring-mine-tests PRIVATE -Wall -Wextra -Wpedantic)
-    foreach(mode rows compete issuance persistence)
+    foreach(mode rows compete issuance persistence pause)
         add_test(NAME next_ring_mine_${mode} COMMAND primechain-next-ring-mine-tests ${mode}
                  ${CMAKE_CURRENT_SOURCE_DIR}/experiments/ring_issuance/a4_vectors.txt)
         set_tests_properties(next_ring_mine_${mode} PROPERTIES TIMEOUT 900)
