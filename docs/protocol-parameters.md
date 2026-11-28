@@ -44,7 +44,7 @@ so far. The rest is designed or planned.
 | 3 | composites per range, at most | 1,024 | D4, engine |
 | 4 | main-chain integer size, at most | 64 bytes | D14, engine |
 | | **Transfers** | | |
-| 5 | minimum fee (micro-units) | 1 | D16, engine, votable |
+| 5 | minimum fee (micro-units), paid by transfers and ring commits | 1 | D16, engine, votable |
 | 6 | outputs per transfer, at most | 1,000 | D16, engine |
 | 7 | inputs per transfer, at most | to be set | A3.2 |
 | 8 | transfers per block and waiting, at most | to be set | A3.2 |
