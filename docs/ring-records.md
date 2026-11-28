@@ -164,5 +164,5 @@ size of √q. Average about half. From 10⁵ on only R was computed (PARI, GRH-b
 
 ## Open
 
-Deposit amount; the quota κ; ring issuance per entry (simulation); limits marked *;
+Deposit amount (parameter 27, a policy tool; 100,000 proposed); the quota κ; ring issuance per entry (simulation); limits marked *;
 segments above degree 2, and the other proposals in `rings-design.md`.

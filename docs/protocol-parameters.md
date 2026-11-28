@@ -69,7 +69,7 @@ so far. The rest is designed or planned.
 | 24 | gate 1 (new rings) | open | R2 |
 | 25 | new rings per epoch, at most (kappa) | to be set | R2 |
 | 26 | reveal window | 10 blocks | R5 |
-| 27 | ring deposit | to be set | R5 |
+| 27 | **ring deposit (refundable, with each commit), a policy tool** | 100,000 micro-units (proposed); 0 allowed | R5 |
 | 28 | eligibility: abs(D) <= F^t | t = 2 | R3 |
 | 29 | certificate size, at most | 256 KB | R4 |
 | 30 | certificate integer size, at most | 4,096 bytes | D14, engine |
