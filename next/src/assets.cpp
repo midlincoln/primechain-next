@@ -35,6 +35,60 @@ bool readSigned(Reader& r, i128& v) {
 // Equal parts of `total` over n receivers; the remainder one unit each to the first ones (as D17).
 u128 part(u128 total, std::size_t n, std::size_t j) { return total / n + (j < total % n ? 1 : 0); }
 
+void writeRow(Writer& w, const Row& r) {
+    w.varint(r.ring);
+    w.integer(r.q);
+    w.varint(r.height);
+    w.text(r.miner);
+    w.varint(r.primes.size());
+    for (const auto& p : r.primes) {
+        w.varint(p.e);
+        w.varint(p.below.size());
+        for (const auto& l : p.below) primechain::next::encode(w, l);
+    }
+}
+
+Hash256 rowHash(const Row& r) {
+    Writer w;
+    w.text("primechain-next/row");
+    writeRow(w, r);
+    return sha3(w.data());
+}
+
+// The rows digest is a sum of row hashes mod 2^256 (little-endian), so it does not depend on the
+// order in which rows are stored or read back from disk.
+void add256(Hash256& acc, const Hash256& h) {
+    unsigned carry = 0;
+    for (std::size_t i = 0; i < acc.size(); ++i) {
+        const unsigned v = static_cast<unsigned>(acc[i]) + h[i] + carry;
+        acc[i] = static_cast<std::uint8_t>(v);
+        carry = v >> 8;
+    }
+}
+
+// The quadratic row shapes the on-disk index stores (record version 1): every prime lies over
+// the main-chain prime q alone.
+std::uint8_t shapeOf(const Row& r) {
+    const auto over_q = [&](const RowPrime& p) { return p.below.size() == 1 && p.below[0] == AssetId::main(r.q); };
+    if (r.primes.empty()) return RowIndex::Inert;
+    if (r.primes.size() == 1 && r.primes[0].e == 2 && over_q(r.primes[0])) return RowIndex::Ramified;
+    if (r.primes.size() == 2 && r.primes[0].e == 1 && r.primes[1].e == 1 && over_q(r.primes[0]) && over_q(r.primes[1]))
+        return RowIndex::Split;
+    return RowIndex::Empty;
+}
+
+Row rowFromRecord(std::uint64_t ring, const Integer& q, const RowIndex::Record& rec) {
+    Row r;
+    r.ring = ring;
+    r.q = q;
+    r.height = rec.height;
+    r.miner = rec.miner;
+    const RowPrime p{rec.shape == RowIndex::Ramified ? 2u : 1u, {AssetId::main(q)}};
+    if (rec.shape == RowIndex::Split) r.primes = {p, p};
+    else if (rec.shape == RowIndex::Ramified) r.primes = {p};
+    return r;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------- asset names
@@ -136,9 +190,17 @@ Address AssetLedger::payeeAt(const RingRecord& r, std::uint64_t height) const {
     return out;
 }
 
-const Row* AssetLedger::row(std::uint64_t ring, const Integer& q) const {
-    const auto it = rows_.find({ring, q});
-    return it == rows_.end() ? nullptr : &it->second;
+std::optional<Row> AssetLedger::row(std::uint64_t ring, const Integer& q) const {
+    if (const auto it = rows_.find({ring, q}); it != rows_.end()) return it->second;
+    if (!index_) {
+        if (rows_external_) throw std::logic_error("ledger: the rows are on disk but no row index is attached");
+        return std::nullopt;
+    }
+    const auto m = main_.find(q);
+    if (m == main_.end()) return std::nullopt;
+    const auto rec = index_->get(ring, m->second.height);  // slot = the main block of q
+    if (!rec || rec->height > index_height_) return std::nullopt;  // none, or left by an interrupted run
+    return rowFromRecord(ring, q, *rec);
 }
 
 const RingRecord* AssetLedger::ring(std::uint64_t number) const {
@@ -148,7 +210,7 @@ const RingRecord* AssetLedger::ring(std::uint64_t number) const {
 
 bool AssetLedger::exists(const AssetId& x) const {
     if (x.isMain()) return x.i == 0 && main_.count(x.q);
-    const Row* r = row(x.ring, x.q);
+    const auto r = row(x.ring, x.q);
     return r && x.i < r->primes.size();
 }
 
@@ -157,10 +219,16 @@ Amount AssetLedger::issued(const AssetId& x) const {
         const auto it = main_.find(x.q);
         return it == main_.end() || x.i != 0 ? Amount{} : it->second.issued;
     }
-    const Row* r = row(x.ring, x.q);
+    const auto r = row(x.ring, x.q);
     if (!r || x.i >= r->primes.size()) return Amount{};
-    const auto v = Amount::fromRaw(rings_.at(x.ring).terms.prime_value).mul(r->primes[x.i].e);  // A4: e * v
+    const RingRecord& ring = rings_.at(x.ring);
+    const auto v = Amount::fromRaw(ring.terms.prime_value).mul(r->primes[x.i].e);  // A4: e * v
     if (!v) throw std::overflow_error("ring prime value overflow");
+    // A4 backlog (parameter 19, fixed per ring): q was mined before the ring opened.
+    if (const auto m = main_.find(x.q); m != main_.end() && m->second.height < ring.opened) {
+        if (v->raw() > (~static_cast<u128>(0)) / kBp) throw std::overflow_error("ring prime value overflow");
+        return Amount::fromRaw(v->raw() * ring.terms.backlog_bp / kBp);
+    }
     return *v;
 }
 
@@ -176,7 +244,7 @@ bool AssetLedger::recordRow(const Row& r, std::string& error) {
     }
     const auto q_it = main_.find(r.q);
     if (q_it == main_.end() || q_it->second.height >= r.height) { error = "row: q is not a main-chain prime before h"; return false; }
-    if (rows_.count({r.ring, r.q})) { error = "row: q already recorded in this ring"; return false; }
+    if (row(r.ring, r.q)) { error = "row: q = " + r.q.get_str() + " already recorded in ring " + std::to_string(r.ring); return false; }
     if (r.miner.empty()) { error = "row: miner missing"; return false; }
     for (const auto& p : r.primes) {
         if (p.e == 0) { error = "row: ramification index 0"; return false; }
@@ -187,6 +255,9 @@ bool AssetLedger::recordRow(const Row& r, std::string& error) {
         }
     }
     rows_.emplace(std::make_pair(r.ring, r.q), r);
+    ++row_count_;
+    add256(rows_sum_, rowHash(r));
+    rows_height_ = std::max(rows_height_, r.height);
     touch(r.height);
     for (std::uint32_t i = 0; i < r.primes.size(); ++i) {  // the history of every prime below is kept at h - 1
         const auto s = split(AssetId{r.ring, r.q, i});
@@ -199,7 +270,7 @@ bool AssetLedger::recordRow(const Row& r, std::string& error) {
 // rest goes in equal parts to the primes directly below; a main-chain prime keeps all of it.
 std::optional<AwardSplit> AssetLedger::split(const AssetId& x) const {
     if (x.isMain() || !exists(x)) return std::nullopt;
-    const Row& r = *row(x.ring, x.q);
+    const Row r = *row(x.ring, x.q);
     const RingTerms& t = rings_.at(x.ring).terms;
     AwardSplit s;
     s.issued = issued(x);
@@ -207,14 +278,14 @@ std::optional<AwardSplit> AssetLedger::split(const AssetId& x) const {
     s.founder = Amount::fromRaw(fo);
     s.miner = Amount::fromRaw(total - up - fo);
     // Depth-first over the primes below (a DAG; the same prime may be reached more than once).
-    struct Item { const std::vector<AssetId>* below; u128 amount; };
-    std::vector<Item> todo{{&r.primes[x.i].below, up}};
+    struct Item { std::vector<AssetId> below; u128 amount; };
+    std::vector<Item> todo{{r.primes[x.i].below, up}};
     while (!todo.empty()) {
         const Item it = todo.back();
         todo.pop_back();
-        const std::size_t n = it.below->size();
+        const std::size_t n = it.below.size();
         for (std::size_t j = 0; j < n; ++j) {
-            const AssetId& l = (*it.below)[j];
+            const AssetId& l = it.below[j];
             const u128 reach = part(it.amount, n, j);
             if (l.isMain()) {
                 if (issued(l) == Amount{}) s.validators = checkedAdd(s.validators, Amount::fromRaw(reach));  // 2 and 3
@@ -223,8 +294,8 @@ std::optional<AwardSplit> AssetLedger::split(const AssetId& x) const {
             }
             const u128 kept = reach * t.kept_bp / kBp;
             s.below.emplace_back(l, Amount::fromRaw(kept));
-            const Row& lower = *row(l.ring, l.q);
-            todo.push_back({&lower.primes[l.i].below, reach - kept});
+            const Row lower = *row(l.ring, l.q);
+            todo.push_back({lower.primes[l.i].below, reach - kept});
         }
     }
     return s;
@@ -246,7 +317,7 @@ i128 AssetLedger::netAt(const AssetId& x, const Address& a, std::optional<std::u
 Amount AssetLedger::due(const AssetId& x, const Address& a) const {
     const auto s = split(x);
     if (!s) return Amount{};
-    const Row& r = *row(x.ring, x.q);
+    const Row r = *row(x.ring, x.q);
     Amount out;
     if (a == r.miner) out = checkedAdd(out, s->miner);
     if (a == payeeAt(rings_.at(x.ring), r.height)) out = checkedAdd(out, s->founder);
@@ -267,7 +338,7 @@ Amount AssetLedger::due(const AssetId& x, const Address& a) const {
 Amount AssetLedger::ownedAt(const AssetId& x, const Address& a, std::uint64_t t) const {
     i128 v = netAt(x, a, t);
     if (!x.isMain())
-        if (const Row* r = row(x.ring, x.q); r && r->height <= t) v += static_cast<i128>(due(x, a).raw());
+        if (const auto r = row(x.ring, x.q); r && r->height <= t) v += static_cast<i128>(due(x, a).raw());
     if (v < 0) throw std::logic_error("ledger: negative balance");
     return Amount::fromRaw(static_cast<u128>(v));
 }
@@ -295,7 +366,7 @@ std::map<Address, Amount> AssetLedger::holders(const AssetId& x) const {
         if (const auto it = history_.find(y); it != history_.end())
             for (const auto& [a, h] : it->second) candidates.insert(a);
         if (const auto s = split(y)) {
-            const Row& r = *row(y.ring, y.q);
+            const Row r = *row(y.ring, y.q);
             candidates.insert(r.miner);
             candidates.insert(payeeAt(rings_.at(y.ring), r.height));
             if (const auto* vals = validatorsAt(r.height)) candidates.insert(vals->begin(), vals->end());
@@ -314,7 +385,76 @@ std::vector<AssetId> AssetLedger::assets() const {
     for (const auto& [x, v] : pool_) out.insert(x);
     for (const auto& [key, r] : rows_)
         for (std::uint32_t i = 0; i < r.primes.size(); ++i) out.insert(AssetId{r.ring, r.q, i});
+    if (index_) {  // a scan of the row index (for wallets, explorers and tests)
+        std::map<std::uint64_t, Integer> by_height;
+        for (const auto& [p, m] : main_) by_height.emplace(m.height, p);
+        index_->forEach([&](std::uint64_t ring, std::uint64_t slot, const RowIndex::Record& rec) {
+            const auto it = by_height.find(slot);
+            if (rec.height > index_height_ || it == by_height.end()) return;
+            const std::uint32_t n = rec.shape == RowIndex::Split ? 2 : rec.shape == RowIndex::Ramified ? 1 : 0;
+            for (std::uint32_t i = 0; i < n; ++i) out.insert(AssetId{ring, it->second, i});
+        });
+    }
     return {out.begin(), out.end()};
+}
+
+std::vector<AssetId> AssetLedger::movedAssets() const {
+    std::set<AssetId> out;
+    for (const auto& [x, h] : history_) out.insert(x);
+    for (const auto& [x, v] : pool_) out.insert(x);
+    return {out.begin(), out.end()};
+}
+
+// ---------------------------------------------------------------- rows on disk (B3.5)
+
+void AssetLedger::attachRowIndex(std::shared_ptr<RowIndex> index) { index_ = std::move(index); }
+
+bool AssetLedger::flushRows(std::string& error) {
+    if (!index_) { error = "no row index attached"; return false; }
+    for (const auto& [key, r] : rows_) {
+        const std::uint8_t shape = shapeOf(r);
+        if (shape == RowIndex::Empty) { error = "only quadratic rows can be stored on disk (record version 1)"; return false; }
+        if (!index_->put(r.ring, main_.at(r.q).height, RowIndex::Record{r.height, r.miner, shape}, error)) return false;
+    }
+    if (!rows_.empty() && !index_->sync(error)) return false;
+    rows_.clear();
+    index_height_ = rows_height_;
+    return true;
+}
+
+bool AssetLedger::verifyRowIndex(std::string& error) const {
+    if (!index_) { error = "no row index attached"; return false; }
+    std::map<std::uint64_t, Integer> by_height;
+    for (const auto& [p, m] : main_) by_height.emplace(m.height, p);
+    std::uint64_t count = 0;
+    Hash256 sum{};
+    bool unknown = false;
+    index_->forEach([&](std::uint64_t ring, std::uint64_t slot, const RowIndex::Record& rec) {
+        if (rec.height > index_height_) return;  // left by an interrupted run; written again by the replay
+        const auto it = by_height.find(slot);
+        if (it == by_height.end() || rows_.count({ring, it->second})) { unknown = true; return; }
+        ++count;
+        add256(sum, rowHash(rowFromRecord(ring, it->second, rec)));
+    });
+    for (const auto& [key, r] : rows_) {
+        ++count;
+        add256(sum, rowHash(r));
+    }
+    if (unknown || count != row_count_ || sum != rows_sum_) {
+        error = "row index does not match the state (" + std::to_string(count) + " rows found, " +
+                std::to_string(row_count_) + " expected)";
+        return false;
+    }
+    return true;
+}
+
+Hash256 AssetLedger::rowsDigest() const {
+    Writer w;
+    w.text("primechain-next/rows");
+    w.varint(row_count_);
+    w.hash(rows_sum_);
+    w.varint(rows_height_);
+    return sha3(w.data());
 }
 
 // ---------------------------------------------------------------- changes
@@ -433,7 +573,9 @@ Hash256 AssetLedger::assetDigest(const AssetId& x) const {
     return sha3(w.data());
 }
 
-void AssetLedger::encode(Writer& w) const {
+void AssetLedger::encode(Writer& w) const { encodeImpl(w, false); }
+
+void AssetLedger::encodeImpl(Writer& w, bool summary) const {
     w.text("primechain-next/assets");
     w.varint(kVersion1);
     w.varint(height_);
@@ -451,6 +593,7 @@ void AssetLedger::encode(Writer& w) const {
         w.amount(Amount::fromRaw(r.terms.upstream_bp));
         w.amount(Amount::fromRaw(r.terms.founder_bp));
         w.amount(Amount::fromRaw(r.terms.kept_bp));
+        w.amount(Amount::fromRaw(r.terms.backlog_bp));
         w.varint(r.opened);
         w.varint(r.payees.size());
         for (const auto& [from, a] : r.payees) {
@@ -458,18 +601,18 @@ void AssetLedger::encode(Writer& w) const {
             w.text(a);
         }
     }
-    w.varint(rows_.size());
-    for (const auto& [key, r] : rows_) {
-        w.varint(r.ring);
-        w.integer(r.q);
-        w.varint(r.height);
-        w.text(r.miner);
-        w.varint(r.primes.size());
-        for (const auto& p : r.primes) {
-            w.varint(p.e);
-            w.varint(p.below.size());
-            for (const auto& l : p.below) primechain::next::encode(w, l);
-        }
+    // Rows: by count and digest; inline only for a ledger without a row index (B3.5).
+    const bool external = index_ || rows_external_;
+    if (!summary) {
+        if (external && !rows_.empty()) throw std::logic_error("ledger: rows not flushed to the row index");
+        w.u8(external ? 1 : 0);
+    }
+    w.varint(row_count_);
+    w.hash(rows_sum_);
+    w.varint(rows_height_);
+    if (!summary && !external) {
+        w.varint(rows_.size());
+        for (const auto& [key, r] : rows_) writeRow(w, r);
     }
     w.varint(history_.size());
     for (const auto& [x, holders] : history_) {
@@ -524,13 +667,13 @@ bool AssetLedger::decode(Reader& r, std::size_t max_text, std::string& error) {
     if (!r.varint(count) || count > kMaxCount) return fail("bad rings");
     for (std::uint64_t k = 0; k < count; ++k) {
         RingRecord rec;
-        Amount v, up, fo, kept;
+        Amount v, up, fo, kept, backlog;
         std::uint64_t payees = 0;
         if (!r.varint(rec.number) || !r.amount(v) || !r.amount(up) || !r.amount(fo) || !r.amount(kept) ||
-            !r.varint(rec.opened) || !r.varint(payees) || payees == 0 || payees > kMaxCount)
+            !r.amount(backlog) || !r.varint(rec.opened) || !r.varint(payees) || payees == 0 || payees > kMaxCount)
             return fail("bad ring");
-        rec.terms = {v.raw(), up.raw(), fo.raw(), kept.raw()};
-        if (up.raw() + fo.raw() > kBp || kept.raw() > kBp) return fail("bad ring terms");
+        rec.terms = {v.raw(), up.raw(), fo.raw(), kept.raw(), backlog.raw()};
+        if (up.raw() + fo.raw() > kBp || kept.raw() > kBp || backlog.raw() > kBp) return fail("bad ring terms");
         for (std::uint64_t j = 0; j < payees; ++j) {
             std::uint64_t from = 0;
             Address a;
@@ -539,7 +682,15 @@ bool AssetLedger::decode(Reader& r, std::size_t max_text, std::string& error) {
         }
         if (!out.rings_.emplace(rec.number, rec).second) return fail("ring twice");
     }
-    if (!r.varint(count) || count > kMaxCount) return fail("bad rows");
+    std::uint8_t external = 0;
+    if (!r.u8(external) || external > 1 || !r.varint(out.row_count_) || !r.hash(out.rows_sum_) ||
+        !r.varint(out.rows_height_) || out.rows_height_ > out.height_)
+        return fail("bad rows");
+    out.rows_external_ = external == 1;
+    count = 0;
+    if (!out.rows_external_ && (!r.varint(count) || count != out.row_count_)) return fail("bad rows");
+    Hash256 sum{};
+    std::uint64_t latest = 0;
     for (std::uint64_t k = 0; k < count; ++k) {
         Row row;
         std::uint64_t primes = 0;
@@ -557,7 +708,11 @@ bool AssetLedger::decode(Reader& r, std::size_t max_text, std::string& error) {
         }
         if (!out.rings_.count(row.ring) || !out.rows_.emplace(std::make_pair(row.ring, row.q), row).second)
             return fail("bad row key");
+        add256(sum, rowHash(row));
+        latest = std::max(latest, row.height);
     }
+    if (!out.rows_external_ && (sum != out.rows_sum_ || latest != out.rows_height_)) return fail("rows digest mismatch");
+    out.index_height_ = out.rows_external_ ? out.rows_height_ : 0;
     if (!r.varint(count) || count > kMaxCount) return fail("bad histories");
     for (std::uint64_t k = 0; k < count; ++k) {
         AssetId x;
@@ -600,17 +755,14 @@ bool AssetLedger::decode(Reader& r, std::size_t max_text, std::string& error) {
     return true;
 }
 
+// Over the state with the rows by count and digest, so a ledger with its rows on disk and one with
+// them in memory compare equal.
 Hash256 AssetLedger::digest() const {
     Writer w;
-    encode(w);
+    encodeImpl(w, true);
     return sha3(w.data());
 }
 
-bool AssetLedger::operator==(const AssetLedger& o) const {
-    Writer a, b;
-    encode(a);
-    o.encode(b);
-    return a.data() == b.data();
-}
+bool AssetLedger::operator==(const AssetLedger& o) const { return digest() == o.digest(); }
 
 }  // namespace primechain::next

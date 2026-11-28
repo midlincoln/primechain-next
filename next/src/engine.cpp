@@ -100,6 +100,7 @@ RingTerms Engine::ringTermsAt(std::uint64_t height) const {
     t.upstream_bp = parameterAt(Param::RingUpstreamShareBp, height);
     t.founder_bp = parameterAt(Param::RingFounderShareBp, height);
     t.kept_bp = parameterAt(Param::RingKeptDownBp, height);
+    t.backlog_bp = parameterAt(Param::RingBacklogShareBp, height);  // [19] A4 backlog (B3.5)
     return t;
 }
 
@@ -138,6 +139,14 @@ Hash256 Engine::stateRoot() const {
         w.text(address);
         w.varint(n);
     }
+    if (!ring_asset_hashes_.empty()) {  // B3.5: ring primes that moved (absent: the root is unchanged)
+        w.text("primechain-next/ring-assets");
+        w.varint(ring_asset_hashes_.size());
+        for (const auto& [x, hash] : ring_asset_hashes_) {
+            encode(w, x);
+            w.hash(hash);
+        }
+    }
     w.hash(governanceDigest());
     return sha3(w.data());
 }
@@ -174,6 +183,11 @@ std::size_t Engine::votesFor(const Hash256& id) const {
 }
 
 void Engine::refreshAssetHash(const Integer& asset) { asset_hashes_[asset] = ledger_.assetDigest(AssetId::main(asset)); }
+
+void Engine::refreshAsset(const AssetId& x) {
+    if (x.isMain()) refreshAssetHash(x.q);
+    else ring_asset_hashes_[x] = ledger_.assetDigest(x);  // B3.5: ring primes moved by transfers
+}
 
 bool Engine::checkSigned(const Bytes& payload, const Address& provider, const Bytes& key, const Bytes& signature,
                          std::string& error) const {
@@ -295,34 +309,50 @@ bool Engine::distinctPrimeFactors(const Integer& n, std::vector<Integer>& out, s
 // ---------------------------------------------------------------- transfers (D16)
 
 bool Engine::checkTransferForm(const Transfer& t, std::string& error) const {
-    if (t.version != kVersion1) { error = "unsupported transfer version"; return false; }
+    if (t.version != kVersion1 && t.version != kTransferVersionRings) { error = "unsupported transfer version"; return false; }
+    // B3.5: version 2 names assets (ring, q, i); version 1 only main-chain primes.
+    const bool rings = t.version == kTransferVersionRings;
+    auto idOf = [&](const Integer& q, std::uint64_t ring, std::uint32_t index) { return AssetId{ring, q, index}; };
+    auto known = [&](const AssetId& x) { return x.isMain() ? x.i == 0 && primes_.count(x.q) != 0 : ledger_.exists(x); };
+    if (!rings) {
+        bool any = t.fee_ring != 0 || t.fee_index != 0;
+        for (const auto& in : t.inputs) any = any || in.ring != 0 || in.index != 0;
+        for (const auto& out : t.outputs) any = any || out.ring != 0 || out.index != 0;
+        if (any) { error = "ring primes need transfer version 2"; return false; }
+    }
     if (t.network_id != policy_.network_id) { error = "wrong network"; return false; }
     if (t.sender.empty()) { error = "missing sender"; return false; }
     if (t.nonce == 0) { error = "nonces start at 1"; return false; }
     if (t.inputs.empty() || t.outputs.empty()) { error = "transfer needs inputs and outputs"; return false; }
     if (t.outputs.size() > parameter(Param::MaxOutputs)) { error = "too many outputs"; return false; }
     if (t.fee < Amount::fromRaw(parameter(Param::MinFee))) { error = "fee below minimum"; return false; }
-    std::map<Integer, Amount> spent;  // per asset: outputs + fee
-    auto add = [&](const Integer& asset, const Amount& amount) {
+    std::map<AssetId, Amount> spent;  // per asset: outputs + fee
+    auto add = [&](const AssetId& asset, const Amount& amount) {
         const auto sum = spent[asset].add(amount);
         if (!sum) return false;
         spent[asset] = *sum;
         return true;
     };
     for (const auto& out : t.outputs) {
+        const AssetId x = idOf(out.asset, out.ring, out.index);
         if (out.amount == Amount{} || out.receiver.empty()) { error = "empty output"; return false; }
-        if (!primes_.count(out.asset)) { error = "unknown asset " + out.asset.get_str(); return false; }
-        if (!add(out.asset, out.amount)) { error = "amount overflow"; return false; }
+        if (!known(x)) { error = "unknown asset " + x.str(); return false; }
+        if (!add(x, out.amount)) { error = "amount overflow"; return false; }
     }
-    if (!primes_.count(t.fee_asset)) { error = "unknown fee asset"; return false; }
-    if (!add(t.fee_asset, t.fee)) { error = "amount overflow"; return false; }
+    const AssetId fee_x = idOf(t.fee_asset, t.fee_ring, t.fee_index);
+    if (!known(fee_x)) { error = "unknown fee asset"; return false; }
+    if (!add(fee_x, t.fee)) { error = "amount overflow"; return false; }
     for (std::size_t i = 0; i < t.inputs.size(); ++i) {
         const auto& in = t.inputs[i];
-        if (i > 0 && !(t.inputs[i - 1].asset < in.asset)) { error = "inputs must be in strictly increasing asset order"; return false; }
+        const AssetId x = idOf(in.asset, in.ring, in.index);
+        if (i > 0 && !(idOf(t.inputs[i - 1].asset, t.inputs[i - 1].ring, t.inputs[i - 1].index) < x)) {
+            error = "inputs must be in strictly increasing asset order";
+            return false;
+        }
         if (in.amount == Amount{}) { error = "empty input"; return false; }
-        if (!primes_.count(in.asset)) { error = "unknown asset " + in.asset.get_str(); return false; }
-        const auto it = spent.find(in.asset);
-        if (it == spent.end() || it->second != in.amount) { error = "conservation violated for asset " + in.asset.get_str(); return false; }
+        if (!known(x)) { error = "unknown asset " + x.str(); return false; }
+        const auto it = spent.find(x);
+        if (it == spent.end() || it->second != in.amount) { error = "conservation violated for asset " + x.str(); return false; }
         spent.erase(it);
     }
     if (!spent.empty()) { error = "conservation violated: output or fee asset without input"; return false; }
@@ -338,21 +368,22 @@ bool Engine::submitTransfer(const Transfer& t, std::string& error) {
 
 bool Engine::applyTransfer(const Transfer& t, std::string& error) {
     if (t.nonce != nonce(t.sender) + 1) { error = "nonce out of order"; return false; }
-    for (const auto& in : t.inputs)
-        if (balance(t.sender, in.asset) < in.amount) { error = "insufficient balance in asset " + in.asset.get_str(); return false; }
+    for (const auto& in : t.inputs) {
+        const AssetId x{in.ring, in.asset, in.index};
+        if (ledger_.owned(x, t.sender) < in.amount) { error = "insufficient balance in asset " + x.str(); return false; }
+    }
     if (!t.public_key.empty() && !registerKey(t.sender, t.public_key, error)) return false;
     // The form check made the inputs exactly the outputs plus the fee, per asset.
     std::vector<std::pair<AssetId, Amount>> debits;
-    for (const auto& in : t.inputs) debits.emplace_back(AssetId::main(in.asset), in.amount);
+    for (const auto& in : t.inputs) debits.emplace_back(AssetId{in.ring, in.asset, in.index}, in.amount);
     std::vector<AssetLedger::Credit> credits;
-    for (const auto& out : t.outputs) credits.push_back({AssetId::main(out.asset), out.receiver, out.amount});
-    const SpendRefusal refused = ledger_.spend(t.sender, debits, credits, AssetId::main(t.fee_asset), t.fee, height_ + 1);
+    for (const auto& out : t.outputs) credits.push_back({AssetId{out.ring, out.asset, out.index}, out.receiver, out.amount});
+    const SpendRefusal refused =
+        ledger_.spend(t.sender, debits, credits, AssetId{t.fee_ring, t.fee_asset, t.fee_index}, t.fee, height_ + 1);
     if (refused != SpendRefusal::None)
         throw std::logic_error(std::string("ledger refused a checked transfer: ") + refusalText(refused));
     nonces_[t.sender] = t.nonce;
-    std::set<Integer> touched;
-    for (const auto& in : t.inputs) touched.insert(in.asset);
-    for (const auto& asset : touched) refreshAssetHash(asset);
+    for (const auto& [x, amount] : debits) refreshAsset(x);
     return true;
 }
 
@@ -538,7 +569,7 @@ bool Engine::registerKey(const Address& address, const Bytes& key, std::string& 
 void Engine::distributePools() {
     std::vector<Address> payouts;  // none configured: the pool keeps accumulating
     for (const auto& v : validators_) payouts.push_back(v.payout_address);
-    for (const auto& asset : ledger_.distributePool(payouts, height_ + 1)) refreshAssetHash(asset.q);
+    for (const auto& asset : ledger_.distributePool(payouts, height_ + 1)) refreshAsset(asset);
 }
 
 std::optional<Block> Engine::closeBlock(const PrimeSubmission& prime, std::string& error) {
@@ -816,6 +847,7 @@ Bytes Engine::encodeState() const {
         w.bytes(encode(proposal));
     }
     registry_.encode(w);  // ring records and open commits (B3.4)
+    w.varint(last_ring_batch_);  // B3.5: one ring batch per main block
     return w.data();
 }
 
@@ -845,7 +877,7 @@ bool Engine::decodeState(const Bytes& data, std::string& error) {
     validators_ = std::move(validators);
     blocks_.clear();
     primes_.clear(); divisors_.clear(); ledger_ = AssetLedger{};
-    keys_.clear(); nonces_.clear(); asset_hashes_.clear();
+    keys_.clear(); nonces_.clear(); asset_hashes_.clear(); ring_asset_hashes_.clear();
     if (!r.varint(height_) || !r.integer(chain_frontier_) || !r.integer(accepted_frontier_) || !r.hash(tip_) ||
         !r.varint(count))
         return fail("bad frontier");
@@ -863,6 +895,11 @@ bool Engine::decodeState(const Bytes& data, std::string& error) {
     std::string ledger_error;
     if (!ledger_.decode(r, l.max_text, ledger_error)) return fail(ledger_error);
     std::set<Integer> assets;
+    std::vector<AssetId> ring_assets;
+    for (const auto& x : ledger_.movedAssets()) {
+        if (x.isMain()) assets.insert(x.q);
+        else ring_assets.push_back(x);
+    }
     for (const auto& x : ledger_.assets())
         if (x.isMain()) assets.insert(x.q);
     if (!r.varint(count)) return fail("bad key registry");
@@ -915,8 +952,12 @@ bool Engine::decodeState(const Bytes& data, std::string& error) {
     }
     std::string registry_error;
     if (!registry_.decode(r, l.max_text, registry_error)) return fail(registry_error);
+    if (!r.varint(last_ring_batch_) || last_ring_batch_ > height_ + 1) return fail("bad ring batch height");
+    ring_batches_.clear();
+    pending_works_.clear();
     if (!r.done()) return fail("trailing bytes");
     for (const auto& asset : assets) refreshAssetHash(asset);
+    for (const auto& x : ring_assets) refreshAsset(x);
     return true;
 }
 
@@ -925,7 +966,15 @@ std::optional<Engine> Engine::open(const std::string& directory, const Policy& p
     auto store = std::make_shared<Store>();
     if (!store->open(directory, error)) return std::nullopt;
     Engine e(policy, genesis);
+    // B3.5: rows live in the store's row index; the rings file holds the ring batches.
+    e.ledger_.attachRowIndex(store->rowIndex());
+    e.persist_rows_ = true;
+    const RingFile& rings = store->rings();
     if (store->blockCount() == 0) {  // new chain: persist the genesis seed blocks
+        if (rings.count() != 0) {
+            error = "rings file without a block file";
+            return std::nullopt;
+        }
         for (const auto& b : e.blocks_)
             if (!store->append(encode(b), error)) return std::nullopt;
         e.store_ = store;
@@ -952,6 +1001,8 @@ std::optional<Engine> Engine::open(const std::string& directory, const Policy& p
             return std::nullopt;
         }
         if (!e.decodeState(state, error)) return std::nullopt;
+        e.ledger_.attachRowIndex(store->rowIndex());  // the snapshot names the rows by count and digest
+        if (!e.ledger_.verifyRowIndex(error)) return std::nullopt;
         Block anchor;
         if (!readBlock(snapshot_height - 1, anchor)) return std::nullopt;
         if (blockHash(anchor.header) != e.tip_ || anchor.header.height != snapshot_height) {
@@ -969,9 +1020,39 @@ std::optional<Engine> Engine::open(const std::string& directory, const Policy& p
             }
         }
     }
+    // Ring batches: before main block h, the batch with open height h (batches up to the snapshot are
+    // in its state; one decided after the last block is applied at the end).
+    std::uint64_t ring_next = 0;
+    while (ring_next < rings.count() && rings.height(ring_next) <= e.height_) ++ring_next;
+    if (e.last_ring_batch_ != 0 && (ring_next == 0 || rings.height(ring_next - 1) != e.last_ring_batch_)) {
+        error = "rings file does not reach the snapshot";  // the snapshot's last ring batch must be in the file
+        return std::nullopt;
+    }
+    auto ringBatchFor = [&](std::uint64_t h) {
+        if (ring_next >= rings.count() || rings.height(ring_next) != h) return true;
+        Bytes raw;
+        RingBatch batch;
+        std::string inner;
+        if (!rings.read(ring_next, raw, error)) return false;
+        if (!decode(raw, batch, policy.limits.max_text, inner) || batch.open_height != h) {
+            error = "rings file corrupt at frame " + std::to_string(ring_next) + ": " + inner;
+            return false;
+        }
+        if (!e.applyRingBatch(batch, /*append=*/false, error)) {
+            error = "ring batch at open height " + std::to_string(h) + ": " + error;
+            return false;
+        }
+        ++ring_next;
+        return true;
+    };
     for (std::uint64_t i = next; i < store->blockCount(); ++i) {
         Block b;
-        if (!readBlock(i, b) || !e.applyBlock(b, error)) return std::nullopt;
+        if (!ringBatchFor(e.height_ + 1) || !readBlock(i, b) || !e.applyBlock(b, error)) return std::nullopt;
+    }
+    if (!ringBatchFor(e.height_ + 1)) return std::nullopt;
+    if (ring_next != rings.count()) {
+        error = "rings file is ahead of the block file";
+        return std::nullopt;
     }
     e.store_ = store;
     return e;
@@ -984,10 +1065,14 @@ Engine Engine::scratch() const {
     // The history is moved aside for the copy and restored; Engine is single-threaded.
     auto& self = const_cast<Engine&>(*this);
     std::vector<Block> history;
+    std::vector<RingBatch> ring_history;
     history.swap(self.blocks_);
+    ring_history.swap(self.ring_batches_);
     Engine copy = *this;
     self.blocks_.swap(history);
+    self.ring_batches_.swap(ring_history);
     copy.store_.reset();  // dry runs must never touch the store
+    copy.persist_rows_ = false;  // nor the row index (rows stay in the copy's memory)
     return copy;
 }
 

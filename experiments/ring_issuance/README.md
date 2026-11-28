@@ -24,3 +24,9 @@ moment used for backlog are arbitrary. In the abuse test the user also mines all
 rings (65%).
 
 Not covered: prices, mining costs, voting on new rings, higher degrees, nested rings.
+
+`a4_rows.py` (2026-11-28, B3.5): rule A4 row by row (v per ring prime times e, the backlog share
+of parameter 19 for primes mined before the ring opened, the R11 split with holders at the end of
+the block before), on 8 quadratic rings over 220 main blocks with competing works. Writes
+`a4_vectors.txt`, which `next_ring_mine_issuance` and `next_ring_mine_persistence` replay through the
+engine; every award is equal to the last unit.

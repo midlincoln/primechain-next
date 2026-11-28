@@ -52,6 +52,9 @@ const std::vector<ParamSpec> kSpecs = {
     // block on average with 100-block epochs). Gate 1 is the way to stop new rings.
     {Param::RingsPerEpoch, "new rings per epoch (kappa)", 1, 1000000, 100},
     {Param::RingDeposit, "ring deposit (micro-units)", 0, kMaxMoney, 100000},  // a policy tool; 0 allowed
+    // [65] a policy tool (R10): each coefficient of a recorded generator; 4,096 proposed. The upper
+    // bound is the decoders' hard bound for ring records (kMaxGeneratorBytes).
+    {Param::GeneratorBytes, "generator bytes per coefficient", 1, 1u << 20, 4096},
 };
 
 u128 at(const ParameterValues& v, Param id) { return v.at(static_cast<std::uint32_t>(id)); }

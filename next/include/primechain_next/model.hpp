@@ -79,15 +79,24 @@ struct AcceptedRange {
 
 // D16: a transfer of labeled micro-units. User transactions keep their signatures in blocks
 // (needed to replay balances); miner submissions do not (D15).
+// B3.5: a transfer of version 2 may name ring primes: the asset is (ring, asset, index), where
+// asset is the main-chain prime q below (ring-records section 1). Version 1 names main-chain primes
+// only (ring and index 0) and keeps its encoding.
+constexpr std::uint64_t kTransferVersionRings = 2;
+
 struct TransferInput {
     Integer asset;
     Amount amount;
+    std::uint64_t ring{0};    // version 2
+    std::uint32_t index{0};   // version 2
 };
 
 struct TransferOutput {
     Integer asset;
     Amount amount;
     Address receiver;
+    std::uint64_t ring{0};    // version 2
+    std::uint32_t index{0};   // version 2
 };
 
 struct Transfer {
@@ -101,6 +110,8 @@ struct Transfer {
     std::uint64_t nonce{0};               // per sender, exactly previous + 1 (first nonce is 1)
     Bytes public_key;                     // optional once the sender's key is registered (D15)
     Bytes signature;
+    std::uint64_t fee_ring{0};            // version 2: the fee asset is (fee_ring, fee_asset, fee_index)
+    std::uint32_t fee_index{0};
 };
 
 // D10/D18: a validator binds a hot consensus key to a cold payout address; both keys sign.

@@ -53,6 +53,7 @@ enum class Param : std::uint32_t {
     MembershipPaidInBp = 36,    // [43] part of the subscription paid in
     RingsPerEpoch = 37,         // [25] kappa: rings opened per epoch, at most (B3.4; doc value to be set)
     RingDeposit = 38,           // [27] deposit with each RING_COMMIT, in micro-units of any main-chain prime (0 allowed)
+    GeneratorBytes = 39,        // [65] bytes per coefficient of a recorded generator, at most (B3.5; a policy tool)
 };
 
 struct ParamSpec {

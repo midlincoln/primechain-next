@@ -50,8 +50,8 @@ struct RingEntry {
     std::uint64_t opened{0};                                // main block of opening
     std::uint64_t commit_height{0};                         // the winning commit
     std::uint64_t commit_index{0};
-    Integer frontier;          // last main-chain prime with a row; 0 = none yet (B3.5 advances it)
-    Hash256 tip{};             // ring genesis hash until the first ring block (B3.5)
+    Integer frontier;          // last main-chain prime with a row; 0 = none yet (advanced by ring blocks, B3.5)
+    Hash256 tip{};             // hash of the latest ring block; the ring genesis hash before the first
     bool paused{false};        // R2 pause state; set by B3.6, not used yet
     bool operator==(const RingEntry&) const = default;
 };
@@ -88,6 +88,8 @@ public:
     std::size_t openedSince(std::uint64_t height) const;  // rings opened in blocks >= height
     const RingEntry& open(RingEntry entry);                // number must be nextNumber()
     bool setPayee(std::uint64_t ring, std::uint64_t height, const Address& payee, std::string& error);
+    // B3.5: a ring block was accepted; the ring is complete up to `frontier`, its tip is `tip`.
+    void advance(std::uint64_t ring, const Integer& frontier, const Hash256& tip);
 
     Bytes encodeEntry(const RingEntry& r) const;
     Bytes encodeCommit(const OpenCommit& c) const;

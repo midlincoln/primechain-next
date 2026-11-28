@@ -646,7 +646,8 @@ void unitTests() {
     // A prime over two primes below (two embeddings) passes equal parts, remainder to the first.
     {
         AssetLedger l = fresh();
-        require(l.openRing(2, RingTerms{50000, 3500, 1500, 5000}, 8, "G", error), error);
+        // backlog 100%: 13 is older than ring 2, and this checks the split alone (A4 backlog: next_ring_mine)
+        require(l.openRing(2, RingTerms{50000, 3500, 1500, 5000, 10000}, 8, "G", error), error);
         require(l.recordRow(quad(1, 13, 9, "D", 2), error), error);
         require(pay(l, "D", x0, "H", 50000, 9) == SpendRefusal::None, "D sells its award of x0 to H");
         Row r; r.ring = 2; r.q = I(13); r.height = 10; r.miner = "E";

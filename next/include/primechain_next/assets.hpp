@@ -13,11 +13,15 @@
 //   last one unless the asset paid something (was below a row) after the last entry's block.
 // - Units held by nobody (the fee pool) earn nothing; rounding remainders are never issued.
 //
-// Pure state, no signatures, no consensus: the Engine (main chain) and later the ring batches
-// (B3.5) drive it. Rows live in memory here; the on-disk index comes with B3.5.
+// Pure state, no signatures, no consensus: the Engine (main chain) and the ring batches (B3.5)
+// drive it. Rows of an in-memory ledger live in memory; a ledger with a RowIndex attached (a
+// persistent engine, B3.5) keeps them on disk, with only the rows of the batch being applied in
+// memory until flushRows().
 #include "primechain_next/model.hpp"
+#include "primechain_next/store.hpp"
 
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -48,6 +52,9 @@ struct RingTerms {
     u128 upstream_bp{3500};     // [21] owners of the primes below
     u128 founder_bp{1500};      // [22] founder's payee
     u128 kept_bp{5000};         // [23] kept by holders of a ring prime on the way down (R11)
+    // [19] rule A4, backlog: a prime above a main-chain prime mined before the ring opened (its
+    // main block below the opening block) issues floor(e * v * backlog_bp / 10,000) (B3.5, proposed).
+    u128 backlog_bp{1000};
     bool operator==(const RingTerms&) const = default;
 };
 
@@ -109,7 +116,7 @@ public:
     bool recordRow(const Row& row, std::string& error);
 
     bool exists(const AssetId& x) const;
-    const Row* row(std::uint64_t ring, const Integer& q) const;
+    std::optional<Row> row(std::uint64_t ring, const Integer& q) const;
     const RingRecord* ring(std::uint64_t number) const;
     Amount issued(const AssetId& x) const;          // nominal amount (0 if unknown)
     std::optional<AwardSplit> split(const AssetId& x) const;
@@ -123,6 +130,7 @@ public:
     // Every address with a nonzero balance of x, awards included (for wallets and the awards file).
     std::map<Address, Amount> holders(const AssetId& x) const;
     std::vector<AssetId> assets() const;            // every asset with a row prime or a history or a pool
+    std::vector<AssetId> movedAssets() const;       // every asset with a history or a pool (no row scan)
 
     // --- changes in block `height` (never below the last block applied)
     // A transfer's balance part: `debits` (one per asset, the outputs plus the fee of that asset)
@@ -138,6 +146,20 @@ public:
     // D17: the pool of every asset to `payouts` in equal shares, the remainder one unit each to
     // the first ones. Returns the assets touched. No payouts: the pool keeps accumulating.
     std::vector<AssetId> distributePool(const std::vector<Address>& payouts, std::uint64_t height);
+
+    // --- rows on disk (B3.5)
+    // Attach the on-disk row index. Rows already in the index count only up to rowsHeight() (later
+    // ones are left from an interrupted run and are written again by the replay).
+    void attachRowIndex(std::shared_ptr<RowIndex> index);
+    bool hasRowIndex() const { return index_ != nullptr; }
+    // Write the rows recorded since the last flush to the index (synced) and drop them from memory.
+    bool flushRows(std::string& error);
+    // After attaching: the index holds exactly the rows the state says (count and digest).
+    bool verifyRowIndex(std::string& error) const;
+    std::uint64_t rowCount() const { return row_count_; }
+    std::uint64_t rowsHeight() const { return rows_height_; }   // the latest block with a row
+    std::size_t rowsInMemory() const { return rows_.size(); }
+    Hash256 rowsDigest() const;                                  // order-independent, over every row
 
     // --- state
     std::uint64_t height() const { return height_; }
@@ -158,12 +180,19 @@ private:
     i128 netAt(const AssetId& x, const Address& a, std::optional<std::uint64_t> t) const;
     Address payeeAt(const RingRecord& r, std::uint64_t height) const;
     const std::vector<Address>* validatorsAt(std::uint64_t height) const;
+    void encodeImpl(Writer& w, bool summary) const;  // summary: rows by count and digest only
 
     std::uint64_t height_{0};                         // the last block applied
     std::uint64_t moved_in_{0};                       // the last block in which a balance moved
     std::map<Integer, MainPrime> main_;
     std::map<std::uint64_t, RingRecord> rings_;
-    std::map<std::pair<std::uint64_t, Integer>, Row> rows_;
+    std::map<std::pair<std::uint64_t, Integer>, Row> rows_;  // all rows, or those not yet flushed to index_
+    std::shared_ptr<RowIndex> index_;                        // B3.5: rows on disk (shared with copies)
+    bool rows_external_{false};                              // decoded from a snapshot without its rows
+    std::uint64_t row_count_{0};
+    Hash256 rows_sum_{};                                     // sum of the row hashes mod 2^256
+    std::uint64_t rows_height_{0};
+    std::uint64_t index_height_{0};                          // rows in index_ count up to this block (flushed)
     std::map<AssetId, std::map<Address, History>> history_;
     std::map<AssetId, std::uint64_t> last_paid_;      // latest row block that paid holders of the asset
     std::map<AssetId, Amount> pool_;

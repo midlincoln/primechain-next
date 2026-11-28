@@ -69,10 +69,15 @@ struct CertificateLimits {  // parameters CertificateBytes, CertificateIntegerBy
     std::uint64_t eligibility_exponent{2};
 };
 
-struct SegmentLimits {      // parameters SegmentPaidRows, SegmentInertRows
+struct SegmentLimits {      // parameters SegmentPaidRows, SegmentInertRows, GeneratorBytes
     std::uint64_t paid_rows{32};
     std::uint64_t inert_rows{1024};
+    std::uint64_t generator_bytes{4096};  // [65] each coefficient of a recorded generator (B3.5)
 };
+
+// Hard decoder bound for generator coefficients in ring records (the voted limit is parameter
+// GeneratorBytes, [65], whose upper bound this is).
+constexpr std::size_t kMaxGeneratorBytes = 1u << 20;
 
 // Arithmetic in Z[omega].
 Integer quadNorm(const Integer& d, const QuadElement& a);
@@ -110,11 +115,76 @@ bool decode(const Bytes& data, Segment& out, const SegmentLimits& limits, std::s
 bool verifyCertificate(const QuadCertificate& cert, const Integer& frontier, const std::vector<Integer>& primes,
                        const PrimeOracle& is_prime, const CertificateLimits& limits, std::string& error);
 
+// Segment body inside a ring block: the row types and generators only (the ring and the start
+// prime follow from the ring block). Same bytes as encode(Segment) after the start prime.
+void encodeSegmentBody(Writer& w, const Segment& segment);
+bool decodeSegmentBody(Reader& r, Segment& out, const SegmentLimits& limits, std::string& error);
+// The last main-chain prime of a segment (its last row), given the primes from its start on.
+Integer segmentLast(const Segment& segment, const std::vector<Integer>& primes);
+
 // Full check of a segment of ring `ring_number` (identity d, unit from its certificate).
 // `primes`: the main-chain primes from the segment's start on, in order, up to the frontier.
 // On success, `out` holds the new ring primes in order.
 bool checkSegment(const Integer& d, const std::optional<QuadElement>& unit, std::uint64_t ring_number,
                   const Segment& segment, const std::vector<Integer>& primes, const SegmentLimits& limits,
                   std::vector<RingPrime>& out, std::string& error);
+
+// ---------------------------------------------------------------- B3.5: mining records
+// docs/ring-records.md section 3, rings-design.md R7.
+
+// RING_WORK (a message, journal data D15): 1 to SegmentsPerSignature consecutive complete segments
+// of one ring, signed once by the miner. Each segment competes and is accepted on its own (D4).
+struct RingWork {
+    std::uint64_t version{kVersion1};
+    std::string network_id;
+    Hash256 ring_id{};
+    Address miner;
+    Bytes public_key;               // optional once the miner's key is registered
+    Integer start;                  // the first segment's start
+    std::vector<Segment> segments;  // each carries the ring ID and its own start
+    Bytes signature;
+    bool operator==(const RingWork&) const = default;
+};
+
+// Ring block (one per ring per batch): the ring, the previous ring block hash (the ring's tip), the
+// start prime, then groups (miner, hash of the signed RING_WORK, its accepted segments).
+struct RingGroup {
+    Address miner;
+    Hash256 work_hash{};
+    std::vector<Segment> segments;  // in a ring block only rows and generators are written
+    bool operator==(const RingGroup&) const = default;
+};
+
+struct RingBlock {
+    std::uint64_t version{kVersion1};
+    std::uint64_t ring{0};
+    Hash256 previous{};
+    Integer start;
+    std::vector<RingGroup> groups;
+    bool operator==(const RingBlock&) const = default;
+};
+
+// Ring batch (to become the third kind of decision, B3.6): open height h (the main block whose
+// rows these are), the hash of main block h - 1, the ring blocks by increasing ring number.
+// Reveals stay in the main block until B3.6.
+struct RingBatch {
+    std::uint64_t version{kVersion1};
+    std::string network_id;
+    std::uint64_t open_height{0};
+    Hash256 previous_main{};
+    std::vector<RingBlock> blocks;
+    bool operator==(const RingBatch&) const = default;
+};
+
+Bytes ringWorkSigningPayload(const RingWork& work);
+Bytes encode(const RingWork& work);
+bool decode(const Bytes& data, RingWork& out, std::size_t max_text, std::string& error);
+Hash256 ringWorkHash(const RingWork& work);  // covers the signature (the "hash of the signed RING_WORK")
+Bytes encode(const RingBlock& block);
+Hash256 ringBlockHash(const RingBlock& block);  // the ring's new tip
+Bytes encode(const RingBatch& batch);
+// Ring IDs and starts of the segments are left empty: the engine fills them from the ring record.
+bool decode(const Bytes& data, RingBatch& out, std::size_t max_text, std::string& error);
+Hash256 ringBatchHash(const RingBatch& batch);
 
 }  // namespace primechain::next

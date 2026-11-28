@@ -204,11 +204,7 @@ bool decode(const Bytes& data, QuadCertificate& out, const CertificateLimits& li
     return true;
 }
 
-Bytes encode(const Segment& s) {
-    Writer w;
-    w.varint(s.version);
-    w.hash(s.ring_id);
-    w.integer(s.start);
+void encodeSegmentBody(Writer& w, const Segment& s) {
     w.varint(s.rows.size());
     for (std::size_t i = 0; i < s.rows.size(); i += 4) {
         std::uint8_t byte = 0;
@@ -218,17 +214,13 @@ Bytes encode(const Segment& s) {
     }
     w.varint(s.generators.size());
     for (const auto& g : s.generators) element(w, g);
-    return w.data();
 }
 
-bool decode(const Bytes& data, Segment& out, const SegmentLimits& limits, std::size_t max_integer_bytes,
-            std::string& error) {
-    out = {};
-    Reader r(data, max_integer_bytes);
+bool decodeSegmentBody(Reader& r, Segment& out, const SegmentLimits& limits, std::string& error) {
     auto fail = [&](const std::string& why) { error = r.error().empty() ? why : why + ": " + r.error(); return false; };
     std::uint64_t count = 0;
-    if (!r.varint(out.version) || out.version != kVersion1) return fail("unsupported segment version");
-    if (!r.hash(out.ring_id) || !r.integer(out.start)) return fail("bad segment header");
+    out.rows.clear();
+    out.generators.clear();
     // A segment has at most inert_rows rows before its first paid row, at most paid_rows paid
     // rows, and one closing row (R7).
     if (!r.varint(count) || count == 0 || count > limits.inert_rows + limits.paid_rows) return fail("bad row count");
@@ -251,8 +243,33 @@ bool decode(const Bytes& data, Segment& out, const SegmentLimits& limits, std::s
         if (!element(r, g)) return fail("bad generator");
         out.generators.push_back(g);
     }
+    return true;
+}
+
+Bytes encode(const Segment& s) {
+    Writer w;
+    w.varint(s.version);
+    w.hash(s.ring_id);
+    w.integer(s.start);
+    encodeSegmentBody(w, s);
+    return w.data();
+}
+
+bool decode(const Bytes& data, Segment& out, const SegmentLimits& limits, std::size_t max_integer_bytes,
+            std::string& error) {
+    out = {};
+    Reader r(data, max_integer_bytes);
+    auto fail = [&](const std::string& why) { error = r.error().empty() ? why : why + ": " + r.error(); return false; };
+    if (!r.varint(out.version) || out.version != kVersion1) return fail("unsupported segment version");
+    if (!r.hash(out.ring_id) || !r.integer(out.start)) return fail("bad segment header");
+    if (!decodeSegmentBody(r, out, limits, error)) return false;
     if (!r.done()) return fail("trailing bytes after segment");
     return true;
+}
+
+Integer segmentLast(const Segment& s, const std::vector<Integer>& primes) {
+    if (s.rows.empty() || primes.size() < s.rows.size()) return Integer(0);
+    return primes[s.rows.size() - 1];
 }
 
 // ---------------------------------------------------------------- checks
@@ -313,6 +330,12 @@ bool checkSegment(const Integer& d, const std::optional<QuadElement>& unit, std:
         if (s.rows[k] != t) { error = "wrong row type at " + q.get_str(); return false; }
         if (t != RowType::Inert) {
             if (used >= s.generators.size()) { error = "missing generator at " + q.get_str(); return false; }
+            // [65] generator size, a policy tool (R10): each coefficient at most generator_bytes.
+            const QuadElement& g = s.generators[used];
+            if (magnitudeBytes(g.c0) > limits.generator_bytes || magnitudeBytes(g.c1) > limits.generator_bytes) {
+                error = "generator exceeds the size limit (parameter 65) at " + q.get_str();
+                return false;
+            }
             const auto r = checkGenerator(d, q, s.generators[used++], unit, error);
             if (!r) return false;
             if (t == RowType::Ramified) out.push_back({ring_number, q, 0, 2, *r});
@@ -329,6 +352,150 @@ bool checkSegment(const Integer& d, const std::optional<QuadElement>& unit, std:
     if (s.rows.size() != end + 1) { error = "segment continues past its end (R7)"; return false; }
     if (used != s.generators.size()) { error = "segment carries extra generators"; return false; }
     return true;
+}
+
+// ---------------------------------------------------------------- B3.5: mining records
+
+namespace {
+
+constexpr std::uint64_t kMaxSegmentsDecoded = 65536;  // the bound of parameter SegmentsPerSignature
+const SegmentLimits kDecodeLimits{65536, 1u << 20, kMaxGeneratorBytes};  // hard decoder bounds
+
+void writeWorkFields(Writer& w, const RingWork& x) {
+    w.varint(x.version);
+    w.text(x.network_id);
+    w.hash(x.ring_id);
+    w.text(x.miner);
+    w.integer(x.start);
+    w.varint(x.segments.size());
+    for (const auto& s : x.segments) {  // each segment: its start, then rows and generators
+        w.integer(s.start);
+        encodeSegmentBody(w, s);
+    }
+}
+
+void writeRingBlock(Writer& w, const RingBlock& b) {
+    w.varint(b.version);
+    w.varint(b.ring);
+    w.hash(b.previous);
+    w.integer(b.start);
+    w.varint(b.groups.size());
+    for (const auto& g : b.groups) {
+        w.text(g.miner);
+        w.hash(g.work_hash);
+        w.varint(g.segments.size());
+        for (const auto& s : g.segments) encodeSegmentBody(w, s);
+    }
+}
+
+}  // namespace
+
+Bytes ringWorkSigningPayload(const RingWork& x) {
+    Writer w;
+    w.text("primechain-next/ring-work");
+    writeWorkFields(w, x);
+    return w.data();
+}
+
+Bytes encode(const RingWork& x) {
+    Writer w;
+    writeWorkFields(w, x);
+    w.bytes(x.public_key);
+    w.bytes(x.signature);
+    return w.data();
+}
+
+bool decode(const Bytes& data, RingWork& out, std::size_t max_text, std::string& error) {
+    out = {};
+    Reader r(data, kMaxGeneratorBytes);
+    auto fail = [&](const std::string& why) { error = r.error().empty() ? why : why + ": " + r.error(); return false; };
+    std::uint64_t count = 0;
+    if (!r.varint(out.version) || out.version != kVersion1) return fail("unsupported ring work version");
+    if (!r.text(out.network_id, max_text) || !r.hash(out.ring_id) || !r.text(out.miner, max_text) || !r.integer(out.start))
+        return fail("bad ring work header");
+    if (!r.varint(count) || count == 0 || count > kMaxSegmentsDecoded) return fail("bad segment count");
+    for (std::uint64_t i = 0; i < count; ++i) {
+        Segment s;
+        s.ring_id = out.ring_id;
+        if (!r.integer(s.start)) return fail("bad segment start");
+        if (!decodeSegmentBody(r, s, kDecodeLimits, error)) return false;
+        out.segments.push_back(std::move(s));
+    }
+    if (!r.bytes(out.public_key, 1u << 16) || !r.bytes(out.signature, 1u << 16)) return fail("bad ring work signature");
+    if (!r.done()) return fail("trailing bytes after ring work");
+    return true;
+}
+
+Hash256 ringWorkHash(const RingWork& x) {
+    Writer w;
+    w.text("primechain-next/ring-work-hash");
+    w.bytes(encode(x));
+    return sha3(w.data());
+}
+
+Bytes encode(const RingBlock& b) {
+    Writer w;
+    writeRingBlock(w, b);
+    return w.data();
+}
+
+Hash256 ringBlockHash(const RingBlock& b) {
+    Writer w;
+    w.text("primechain-next/ring-block");
+    w.bytes(encode(b));
+    return sha3(w.data());
+}
+
+Bytes encode(const RingBatch& x) {
+    Writer w;
+    w.varint(x.version);
+    w.text(x.network_id);
+    w.varint(x.open_height);
+    w.hash(x.previous_main);
+    w.varint(x.blocks.size());
+    for (const auto& b : x.blocks) writeRingBlock(w, b);
+    return w.data();
+}
+
+bool decode(const Bytes& data, RingBatch& out, std::size_t max_text, std::string& error) {
+    out = {};
+    Reader r(data, kMaxGeneratorBytes);
+    auto fail = [&](const std::string& why) { error = r.error().empty() ? why : why + ": " + r.error(); return false; };
+    std::uint64_t count = 0;
+    if (!r.varint(out.version) || out.version != kVersion1) return fail("unsupported ring batch version");
+    if (!r.text(out.network_id, max_text) || !r.varint(out.open_height) || !r.hash(out.previous_main))
+        return fail("bad ring batch header");
+    if (!r.varint(count) || count > data.size()) return fail("bad ring block count");
+    for (std::uint64_t i = 0; i < count; ++i) {
+        RingBlock b;
+        std::uint64_t groups = 0;
+        if (!r.varint(b.version) || b.version != kVersion1 || !r.varint(b.ring) || !r.hash(b.previous) ||
+            !r.integer(b.start) || !r.varint(groups) || groups > data.size())
+            return fail("bad ring block");
+        for (std::uint64_t j = 0; j < groups; ++j) {
+            RingGroup g;
+            std::uint64_t segments = 0;
+            if (!r.text(g.miner, max_text) || !r.hash(g.work_hash) || !r.varint(segments) ||
+                segments > kMaxSegmentsDecoded)
+                return fail("bad ring group");
+            for (std::uint64_t k = 0; k < segments; ++k) {
+                Segment s;
+                if (!decodeSegmentBody(r, s, kDecodeLimits, error)) return false;
+                g.segments.push_back(std::move(s));
+            }
+            b.groups.push_back(std::move(g));
+        }
+        out.blocks.push_back(std::move(b));
+    }
+    if (!r.done()) return fail("trailing bytes after ring batch");
+    return true;
+}
+
+Hash256 ringBatchHash(const RingBatch& x) {
+    Writer w;
+    w.text("primechain-next/ring-batch");
+    w.bytes(encode(x));
+    return sha3(w.data());
 }
 
 }  // namespace primechain::next

@@ -40,18 +40,22 @@ void writeTransferFields(Writer& w, const Transfer& t) {
     w.varint(t.version);
     w.text(t.network_id);
     w.text(t.sender);
+    const bool rings = t.version >= kTransferVersionRings;  // B3.5: (ring, index) after each asset
     w.varint(t.inputs.size());
     for (const auto& in : t.inputs) {
         w.integer(in.asset);
+        if (rings) { w.varint(in.ring); w.varint(in.index); }
         w.amount(in.amount);
     }
     w.varint(t.outputs.size());
     for (const auto& out : t.outputs) {
         w.integer(out.asset);
+        if (rings) { w.varint(out.ring); w.varint(out.index); }
         w.amount(out.amount);
         w.text(out.receiver);
     }
     w.integer(t.fee_asset);
+    if (rings) { w.varint(t.fee_ring); w.varint(t.fee_index); }
     w.amount(t.fee);
     w.varint(t.nonce);
     w.bytes(t.public_key);
@@ -138,19 +142,34 @@ bool readAccepted(Reader& r, AcceptedRange& out, const Limits& l) {
     return true;
 }
 
+// (ring, index) of a version 2 transfer; the index fits 32 bits.
+bool readRingIndex(Reader& r, bool rings, std::uint64_t& ring, std::uint32_t& index) {
+    if (!rings) return true;
+    std::uint64_t i = 0;
+    if (!r.varint(ring) || !r.varint(i) || i > 0xffffffffu) return false;
+    index = static_cast<std::uint32_t>(i);
+    return true;
+}
+
 bool readTransfer(Reader& r, Transfer& t, const Limits& l) {
-    std::uint64_t n_in = 0, n_out = 0;
-    if (!expectTag(r, kTransferTag, t.version) || !r.text(t.network_id, l.max_text) || !r.text(t.sender, l.max_text) ||
-        !r.varint(n_in) || n_in > l.max_list)
+    std::uint64_t n_in = 0, n_out = 0, tag = 0;
+    // Versions 1 and 2 (B3.5: ring primes); other versions are rejected (D12).
+    if (!r.varint(tag) || tag != kTransferTag || !r.varint(t.version) ||
+        (t.version != kVersion1 && t.version != kTransferVersionRings) || !r.text(t.network_id, l.max_text) ||
+        !r.text(t.sender, l.max_text) || !r.varint(n_in) || n_in > l.max_list)
         return false;
+    const bool rings = t.version == kTransferVersionRings;
     t.inputs.resize(n_in);
-    for (auto& in : t.inputs) if (!r.integer(in.asset) || !r.amount(in.amount)) return false;
+    for (auto& in : t.inputs)
+        if (!r.integer(in.asset) || !readRingIndex(r, rings, in.ring, in.index) || !r.amount(in.amount)) return false;
     if (!r.varint(n_out) || n_out > l.max_list) return false;
     t.outputs.resize(n_out);
     for (auto& out : t.outputs)
-        if (!r.integer(out.asset) || !r.amount(out.amount) || !r.text(out.receiver, l.max_text)) return false;
-    return r.integer(t.fee_asset) && r.amount(t.fee) && r.varint(t.nonce) && r.bytes(t.public_key, l.max_key_bytes) &&
-           r.bytes(t.signature, l.max_signature_bytes);
+        if (!r.integer(out.asset) || !readRingIndex(r, rings, out.ring, out.index) || !r.amount(out.amount) ||
+            !r.text(out.receiver, l.max_text))
+            return false;
+    return r.integer(t.fee_asset) && readRingIndex(r, rings, t.fee_ring, t.fee_index) && r.amount(t.fee) &&
+           r.varint(t.nonce) && r.bytes(t.public_key, l.max_key_bytes) && r.bytes(t.signature, l.max_signature_bytes);
 }
 
 bool readValidator(Reader& r, ValidatorRecord& v, const Limits& l) {

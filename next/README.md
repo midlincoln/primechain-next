@@ -163,7 +163,7 @@ Clean under AddressSanitizer and UndefinedBehaviorSanitizer.
 
 ## B3.1: parameter table (D20)
 
-`parameters.hpp/.cpp`: every number is a protocol parameter (38, ids 1–38; 37 and 38 added in B3.4), with placeholder
+`parameters.hpp/.cpp`: every number is a protocol parameter (39, ids 1–39; 37 and 38 added in B3.4, 39 = [65] generator size in B3.5), with placeholder
 hard bounds in code and a history, so `parameterAt(id, h)` gives the value for any block.
 Votes are one kind, `ParamChange` (id, old value, new value), with notice; a change applies
 from its effective height and never retroactively. Headers carry the digest of the table in
@@ -242,7 +242,7 @@ remainder to the first (as D17); a prime below must come from an earlier block t
 ("lower rings first"); no validators at h means the 2/3 part is not issued; a main prime with
 nominal issue 0 (2 and 3) counts as having no holders; zero moves are not recorded; the ledger's
 `spend` requires debits to equal credits plus fee per asset. The issuance backlog (parameter 19)
-is left to B3.5: the ledger takes v·e per prime as given.
+came with B3.5 (below).
 
 ## B3.4: opening rings
 
@@ -294,7 +294,7 @@ epoch (the doc leaves it to be set); a payee change applies from its block, the 
 counts; the ring frontier starts at 0 and the tip at a genesis hash. Not built: "blocks under a
 pause of all rings do not count toward the 10" (pausing comes with B3.6).
 
-**How B3.5 and B3.6 plug in.** B3.5 reads D and the unit from `RingEntry` for `checkSegment`,
+**How B3.5 and B3.6 plug in** (B3.5 is now built, below). B3.5 reads D and the unit from `RingEntry` for `checkSegment`,
 advances `frontier` and `tip` as ring blocks are accepted, and records rows in the ledger.
 B3.6 moves `ring_reveals` from the main block into ring batches: the batch handler calls the
 same `applyRingReveal` then `openRings` for the batch's open height (expiry stays at main
@@ -311,11 +311,94 @@ Tests (`ctest -R next_ring_open`):
 | `next_ring_open_governance` | gate 1 closed by vote: new commits refused, a commit made while open still opens after (R2) |
 | `next_ring_open_persistence` | restart with snapshots every 3 blocks while commits are sealed and revealed; open, payee change and expiry after restart; second restart; replay from the block file; codec round trip; identical tip, state root, registry and ledger |
 
+## B3.5: mining rings
+
+Records (`rings.hpp`): `RingWork` (version, network, ring ID, miner, optional key, start prime, 1 to
+`SegmentsPerSignature` consecutive complete segments, signature; at most `MiningMessageBytes`),
+`RingBlock` (ring number, previous ring block hash, start prime, groups of miner + hash of the signed
+`RING_WORK` + its accepted segments), `RingBatch` (version, network, open height h, hash of main block
+h − 1, ring blocks by increasing ring number; at most `RingBatchBytes`). In a ring block a segment is
+only its row types (2 bits each) and generators; ring and start follow from the ring record.
+Code: `engine_mining.cpp`; files: `store.hpp/.cpp` (`RingFile`, `RowIndex`).
+
+- **Checks.** A work is checked in full at submission (form, signature, size, segments per signature,
+  each segment by the B3.2 `checkSegment` against the ring record's D and unit) and queued until all
+  its segments are recorded. Every batch is checked again in full: open height h = next main block,
+  previous main hash, one ring block per ring, previous ring block hash = the ring's tip, start prime =
+  the prime after the ring's frontier, segments consecutive, each row (type by the Kronecker symbol,
+  norm, smaller root, no padding, R7 end), every q at most the chain frontier, the size limits.
+- **Generator size (parameter 65, `GeneratorBytes`, engine id 39, 4,096, a policy tool):** each
+  coefficient of a recorded generator; checked inside `checkSegment` with the value in force at h.
+- **Competition (R7, D4):** at a ring's next prime, the queued work reaching furthest wins, ties by
+  arrival; its segments from there on are accepted (a tail), then the next position. A batch naming
+  another valid work is valid too (the proposer's choice plus the vote decides).
+- **Miner credit:** a decided batch carries the signed works its groups name
+  (`Engine::RingBatchValue`); each group must name an attached work, credit its signer and copy its
+  consecutive segments. The rings file keeps attribution and work hash, not the signature (D15).
+- **Rows and issuance (R13, A4):** every row is recorded in the ledger in block h, inert rows too, and
+  the ring record's frontier and tip advance (tip = hash of the ring block). A ring prime with index e
+  issues e·v; if q's main block is before the ring's opening block it issues ⌊e·v·b / 10,000⌋, b =
+  parameter 19 (`RingBacklogShareBp`, 10%), fixed in the ring's terms at opening (`RingTerms::backlog_bp`).
+  The B3.3 split follows (miner 50%, founder's payee 15%, holders of q at the end of h − 1 35%).
+- **`extension_root`:** unchanged form (ring records with frontier and tip, open commits, reveals);
+  the batch at h is applied before main block h's prime, so block h's root covers the new tips. A
+  missing, altered or extra batch makes the block differ from its replay.
+- **Spending awards:** transfers of version 2 name assets (ring, q, i) for inputs, outputs and fee;
+  version 1 keeps its encoding and names main-chain primes only. Ring primes that moved are hashed into
+  `state_root` (nothing is added while none has moved).
+- **Files (D19).** `rings.dat` (frames: length, open height, batch, SHA3) with `rings.idx` (offset,
+  height, check); `rows.dat`, the row index: per ring, chunks of 1,024 slots, slot j = the main block of
+  q, 32-byte records (height, miner id, shape, check); `miners.dat` (addresses). Only a directory of
+  chunks and the miner table stay in memory; a persistent ledger holds the rows of the batch being
+  applied and writes them after the batch is durable in `rings.dat`. The snapshot names the rows by
+  count and an order-independent digest; on open the index must match it exactly. Every chunk,
+  record, miner entry and index entry is checked on open; a bad one refuses to open; a missing rings
+  index, row index or miner table is not recreated next to data that needs it. An incomplete final
+  frame (an interrupted append) is cut away, as for `blocks.dat`. Restart: snapshot, then for each
+  later main block h the batch with open height h, then the block; a batch decided after the last
+  block is applied at the end. Rows in the index above the snapshot are ignored and written again.
+
+Tests (`ctest -R next_ring_mine`, vectors `experiments/ring_issuance/a4_vectors.txt` from
+`a4_rows.py`, a Python model of A4 issuance row by row, independent of the engine):
+
+| Test | What it checks |
+|---|---|
+| `next_ring_mine_rows` | a valid work of 3 segments: rows (inert ones too), shapes, A4 issue with backlog, miner credited at once, frontier and tip, `extension_root`; refused works: another prime's generator, wrong norm, conjugate (larger root), wrong row type, segment ending early or running past its end, two equal segments (gap), a segment starting one prime late, a miner field not matching the key, a missing key, a segment of another ring, an unopened ring, rows above the chain frontier, segments already recorded, the same work twice; padded generators (g·ε, g/ε in Q(√97)); parameter 65 at 1 byte: refused at q = 43 (coefficient 293), a vote raising it to 2 takes effect after the notice, refused during it, never retroactive on replay; hand-made batches refused with state unchanged: credit to another miner, a work not attached, an extra work, wrong previous ring block hash, wrong start prime, a segment changed after signing, wrong open height, wrong main hash, two ring blocks for one ring, a second batch in one block; raw batches with wrong start or previous hash fail replay; a forged `extension_root`, a missing batch and a batch crediting another miner fail replay; segments per signature (2), message size (4,000), batch size (1,024: the proposer stays below it, a larger value is refused) |
+| `next_ring_mine_compete` | same start: the work reaching further wins; identical segments: the earlier arrival, the copy also valid as a proposal, stale afterwards; tails (D gets 5–6, E the tail 7–8 of its 6–8); a work beyond a gap waits, then follows; two rings in one batch; a main-chain prime sold in block h − 1: buyer and seller share the upstream part pro rata; the blocks alone do not replay, both files do |
+| `next_ring_mine_issuance` | the 218-block schedule of `a4_rows.py` (8 rings opening at blocks 6–176, 494 works with copies and gaps, 180 batches, 1,724 rows): every batch accepts what the simulation accepts; per ring rows, paid rows, backlog primes and units issued; every address's total; all 5,219 award lines (SHA3) equal to the last unit; spot checks of the backlog split; replay from both files; spending an award (version 2), a version 1 transfer naming a ring prime refused, an unknown ring prime refused, an overspend not included, v2 codec, replay |
+| `next_ring_mine_persistence` | the same schedule with restarts at 40, 97, 150, 151 (snapshots every 7 blocks): identical tip, state root, registry, ledger, rows digest; no rows in memory after open; a batch decided after the last block applied on open; replay from the two files bit-identical (blocks and batches); a new directory from the two files alone rebuilds the row index (same ledger, registry and state); refused: corrupted rings file, rings index (checksum, missing entries, missing file), row record, chunk header, miner table, missing row index, an empty row index under a snapshot with rows, a missing rings file; an incomplete final ring frame is cut away |
+
+Measured in these tests (small rings, Release; B3.7 measures at scale): the rings file takes about
+38 bytes per row (a group's miner address and work hash dominate; generators are a few bytes per
+paid row); the row index 32 bytes per slot, 152 bytes per row here because each ring's chunk has
+1,024 slots and these rings reach about 220 rows; 10–15 ms per batch of about 10 rows (build, the
+dry run on a copy of the engine, apply); the tests run in under 15 MB. All 19 non-consensus `next_`
+tests pass (2026-11-28); the `next_consensus_*` tests were not run here (no consensus code changed).
+
+Choices left open by the docs (proposed): one ring batch per main block (R1 allows one between two
+main decisions); the batch at h is applied before block h's prime and its rows count from h; the
+competition rule above; the batch carries the signed works and must name each one; every row is
+recorded, inert rows too; the proposer fills rings in number order and stops at the first group that
+would exceed the batch limit; works are journal data and register no keys (a miner without a
+main-chain key sends it with each work); backlog means q's main block is before the ring's opening
+block, with ⌊e·v·b/10,000⌋ rounded down per prime (b fixed per ring at opening); transfers of ring
+primes are version 2. Under A4, plan items 1 (which rings count for the backlog) and 2 (paused rings
+count as open) no longer matter: no share depends on the other rings. Ring IDs in works, numbers in
+blocks (ring-records section 1).
+
+**How B3.6 plugs in.** The consensus value of a ring batch is `Engine::RingBatchValue`: the proposer
+calls `buildRingBatch()`, every validator `checkRingBatch(value)` (a dry run on a copy), and all apply
+the decided value with `applyDecidedRingBatch(value)`, which writes the rings file and the row index.
+It must be decided after main block h − 1 and before block h's prime; `lastRingBatchHeight()` enforces
+one per block. B3.6 adds it to `consensus::Value` as a third kind, moves `ring_reveals` into the batch
+(calling `applyRingReveal` and `openRings` there), and adds pausing (`RingEntry::paused` and
+`RingsPaused` are already refused by the batch checks). No consensus code was changed in B3.5.
+
 ## Deferred
 
 - **Monetary layer:** reserves, loans, banks.
 - **A3.2–A3.3:** networking, catch-up from the block file, a validator daemon.
-- **B3:** mining rings (B3.5), ring batches and pausing (B3.6).
+- **B3:** ring batches in consensus and pausing (B3.6), measurement at scale (B3.7).
 - An incremental state Merkle tree. `state_root` currently hashes one cached
   digest per asset.
 

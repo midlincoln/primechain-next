@@ -130,6 +130,31 @@ public:
         return pending_ring_commits_.size() + pending_ring_payees_.size() + pending_ring_reveals_.size();
     }
 
+    // B3.5: mining rings (ring-records.md section 3; rings-design.md R7-R10, R13; rule A4).
+    // A RING_WORK is checked in full at submission (form, signature, size, segments per signature,
+    // every row against the ring record) and queued; it stays queued until every segment in it is
+    // recorded. Each segment competes on its own (D4): the proposer takes, at each ring's next
+    // prime, the queued work that reaches furthest (ties by arrival) and accepts its segments from
+    // there on. A ring batch is for the next main block h = height() + 1 (its rows count from h,
+    // R13) and is applied before that block's prime; at most one per main block (proposed).
+    struct RingBatchValue {
+        RingBatch batch;
+        std::vector<RingWork> works;  // the signed messages its groups name (journal data, D15)
+    };
+    bool submitRingWork(const RingWork& work, std::string& error);
+    std::size_t pendingRingWorkCount() const { return pending_works_.size(); }
+    std::optional<RingBatchValue> buildRingBatch() const;                     // the proposer
+    bool checkRingBatch(const RingBatchValue& value, std::string& error) const;  // every validator, on a copy
+    // The decided batch: the works must match the groups (hash, miner, segments), then every ring
+    // block is checked and applied; with persistence it is appended to the rings file and its rows
+    // are written to the row index before returning.
+    bool applyDecidedRingBatch(const RingBatchValue& value, std::string& error);
+    // Ring batches applied by this engine (since the loaded snapshot for an opened one).
+    const std::vector<RingBatch>& ringBatches() const { return ring_batches_; }
+    std::uint64_t lastRingBatchHeight() const { return last_ring_batch_; }
+    struct StoreBytes { std::uint64_t blocks{0}, rings{0}, rows{0}; };
+    StoreBytes storeBytes() const;  // file sizes, for measurement (zero without persistence)
+
     // Key registry: each key is stored once (in the block where it is first accepted).
     bool hasKey(const Address& address) const { return keys_.count(address) != 0; }
 
@@ -139,6 +164,9 @@ public:
     static std::optional<Engine> replay(const Policy& policy, const std::vector<Block>& blocks, std::string& error) {
         return replay(policy, Genesis{}, blocks, error);
     }
+    // B3.5: replay from the two files: before main block h, the ring batch with open height h.
+    static std::optional<Engine> replay(const Policy& policy, const Genesis& genesis, const std::vector<Block>& blocks,
+                                        const std::vector<RingBatch>& batches, std::string& error);
 
     // D19: open (or create) a persistent chain in `directory`: load the latest snapshot and
     // replay the blocks after it. Refuses to open on corruption or a policy/genesis mismatch.
@@ -170,6 +198,22 @@ private:
     void expireCommits();
     void openRings();
     bool chainPrime(const Integer& n) const;  // the PrimeOracle for certificates (exact, R3)
+    // B3.5 (engine_mining.cpp).
+    struct PendingWork {
+        std::uint64_t arrival{0};
+        RingWork work;
+        Hash256 hash{};
+        std::uint64_t ring{0};
+        std::vector<Integer> starts;  // of each segment
+        std::vector<Integer> lasts;   // the last row of each segment
+    };
+    SegmentLimits segmentLimitsAt(std::uint64_t height) const;
+    Integer nextChainPrime(const Integer& q) const;  // 2 for q = 0; 0 if not on chain yet
+    std::vector<Integer> chainPrimesFrom(const Integer& start, std::size_t n) const;
+    bool checkSegments(const RingEntry& ring, const std::vector<Segment>& segments, const Integer& start,
+                       const SegmentLimits& limits, std::vector<Integer>& lasts, std::string& error) const;
+    bool checkRingWork(const RingWork& work, PendingWork& out, std::string& error) const;
+    bool applyRingBatch(const RingBatch& batch, bool append, std::string& error);  // verified; replay too
     bool checkGovernanceForm(const GovernanceTx& tx, std::string& error) const;
     bool applyGovernance(const GovernanceTx& tx, std::string& error);
     bool isScheduled(const Hash256& proposal_id) const;
@@ -184,6 +228,7 @@ private:
     void applyAccepted(const AcceptedRange& range);
     void distributePools();
     void refreshAssetHash(const Integer& asset);
+    void refreshAsset(const AssetId& x);  // main or ring prime (B3.5)
     Hash256 validatorEpochDigest() const;
     Bytes encodeState() const;
     bool decodeState(const Bytes& data, std::string& error);
@@ -229,9 +274,15 @@ private:
     std::vector<RingPayee> pending_ring_payees_, included_ring_payees_;
     std::vector<RingReveal> pending_ring_reveals_, included_ring_reveals_;
     std::map<Integer, Hash256> asset_hashes_;
+    std::map<AssetId, Hash256> ring_asset_hashes_;            // B3.5: ring primes moved by transfers
     std::map<Address, Bytes> keys_;                           // address -> public key (registered once)
     std::map<Address, std::uint64_t> nonces_;                 // sender -> last used nonce
     std::vector<KeyRecord> new_keys_;                         // registered since the last block
+    std::vector<PendingWork> pending_works_;                  // B3.5: queued RING_WORK messages
+    std::uint64_t arrivals_works_{0};
+    std::vector<RingBatch> ring_batches_;                     // applied (since the snapshot when opened)
+    std::uint64_t last_ring_batch_{0};                        // open height of the last ring batch (state)
+    bool persist_rows_{false};                                // write rows to the store's row index
     std::shared_ptr<Store> store_;                            // set by open(); copies share it
 };
 

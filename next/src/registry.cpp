@@ -42,11 +42,12 @@ void writeTerms(Writer& w, const RingTerms& t) {
     w.amount(Amount::fromRaw(t.upstream_bp));
     w.amount(Amount::fromRaw(t.founder_bp));
     w.amount(Amount::fromRaw(t.kept_bp));
+    w.amount(Amount::fromRaw(t.backlog_bp));
 }
 bool readTerms(Reader& r, RingTerms& t) {
-    Amount a, b, c, d;
-    if (!r.amount(a) || !r.amount(b) || !r.amount(c) || !r.amount(d)) return false;
-    t = {a.raw(), b.raw(), c.raw(), d.raw()};
+    Amount a, b, c, d, e;
+    if (!r.amount(a) || !r.amount(b) || !r.amount(c) || !r.amount(d) || !r.amount(e)) return false;
+    t = {a.raw(), b.raw(), c.raw(), d.raw(), e.raw()};
     return true;
 }
 
@@ -100,6 +101,13 @@ const RingEntry& RingRegistry::open(RingEntry entry) {
     if (entry.number != nextNumber() || by_id_.count(entry.ring_id)) throw std::logic_error("registry: bad ring opening");
     by_id_.emplace(entry.ring_id, entry.number);
     return rings_.emplace(entry.number, std::move(entry)).first->second;
+}
+
+void RingRegistry::advance(std::uint64_t number, const Integer& frontier, const Hash256& tip) {
+    const auto it = rings_.find(number);
+    if (it == rings_.end() || frontier <= it->second.frontier) throw std::logic_error("registry: bad ring advance");
+    it->second.frontier = frontier;
+    it->second.tip = tip;
 }
 
 // Same rule as AssetLedger::setPayee: the last change in a block counts.
