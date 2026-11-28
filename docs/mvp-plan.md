@@ -38,10 +38,25 @@ Three tracks; each step built by a worker, reviewed, shown to the founder, then 
    - M3 prudential measures and the Fed's view (computed every block);
    - M4 discount window and Fed parameters;
    - M5 cash with test RSA keys (refresh, freeze, limits).
-4. **Clients:** miner client, wallet, reference bank, explorer; then the invited testnet.
+4. **Clients:** the programs below; then the invited testnet.
 
 Tracks 1 and 3 touch the same state, so they alternate rather than run at once; track 2
 is independent. Heavy builds stay one at a time on this host.
+
+## Programs (agreed 2026-11-28)
+
+Separate programs for separate jobs, all on one shared library (formats, checks,
+signatures), so none can disagree with the validators on what is valid. Everything except
+the validator is a reference: anyone may write their own.
+
+| Program | Who runs it | What it does | Comes with |
+|---|---|---|---|
+| **validator** | validator operators | node, catch-up, status, store tools (subcommands, F11) | A3.2 |
+| **miner** | anyone | main-chain and ring mining | A3.2 (N5), B3.5 |
+| **wallet** | anyone | keys, transfers, balances; later holding and paying notes, holding cash | A3.2, then M1, M5 |
+| **bank** (reference setup) | a bank | role addresses, the customer ledger (private, never on chain), proofs of liabilities, answering withdrawal claims, buying and redeeming cash, the book of notes and its prudential figures | M2–M5 |
+| **ceremony** | ceremony participants | join, contribute one step, publish it with its proof, check the others; later canary keys; small enough to run on a clean, offline machine | toy ceremony on chain |
+| **explorer** | anyone, read only | chain, rings, assets, and the Fed's view (bank measures, reserves, overdue notes) | M3 |
 
 ## Productive work (the frontier)
 
