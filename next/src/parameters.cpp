@@ -35,13 +35,13 @@ const std::vector<ParamSpec> kSpecs = {
     {Param::RingGateOpen, "new rings allowed", 0, 1, 1},
     {Param::RingRevealWindow, "reveal window (blocks)", 1, 1000000, 10},
     {Param::RingEligibilityExponent, "eligibility exponent t", 1, 8, 2},
-    {Param::CertificateBytes, "certificate bytes", 1024, 64u << 20, 256u << 10},
+    {Param::CertificateBytes, "certificate bytes", 256, 64u << 20, 256u << 10},
     {Param::CertificateIntegerBytes, "certificate integer bytes", 64, 1u << 20, 4096},
     {Param::SegmentPaidRows, "paid rows per segment", 1, 65536, 32},
     {Param::SegmentInertRows, "inert rows before a paid one", 1, 1u << 20, 1024},
     {Param::SegmentsPerSignature, "segments per signature", 1, 65536, 64},
     {Param::MiningMessageBytes, "mining message bytes", 1024, 64u << 20, 256u << 10},
-    {Param::RingBatchBytes, "ring batch bytes", 1024, 256u << 20, 256u << 10},
+    {Param::RingBatchBytes, "ring batch bytes", 1024, 256u << 20, 512u << 10},
     {Param::RingsPaused, "all rings paused", 0, 1, 0},
     {Param::CashTotalLimit, "cash total limit", 0, kMaxMoney * 1000, 0},
     {Param::CashKindLimit, "cash limit per kind", 0, kMaxMoney * 1000, 0},
@@ -85,6 +85,10 @@ std::string checkParameters(const ParameterValues& values) {
     if (at(values, Param::RingUpstreamShareBp) + at(values, Param::RingFounderShareBp) > kBp)
         return "ring shares exceed 100%";
     if (at(values, Param::TimeoutCapMs) < at(values, Param::TimeoutBaseMs)) return "timeout cap below base";
+    // B3.6: a reveal rides in a ring batch, so a batch must hold the largest valid certificate
+    // plus the reveal's other fields and the batch header (512 bytes is ample for both).
+    if (at(values, Param::RingBatchBytes) < at(values, Param::CertificateBytes) + 512)
+        return "ring batch limit below the certificate limit plus 512 bytes";
     return {};
 }
 

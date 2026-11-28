@@ -629,6 +629,7 @@ void rowTests(const Vectors& vec) {
         p.parameters[pid(Param::SegmentsPerSignature)] = 2;
         p.parameters[pid(Param::MiningMessageBytes)] = 4000;
         p.parameters[pid(Param::RingBatchBytes)] = 1024;
+        p.parameters[pid(Param::CertificateBytes)] = 512;  // the batch must hold a certificate plus 512
         Engine f(p, genesis);
         for (int k = 0; f.height() < 20; ++k) closeNext(f, A, B);
         openRing(f, A, B, certificate(vec, -4), 1);

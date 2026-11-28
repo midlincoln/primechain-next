@@ -1279,7 +1279,7 @@ void ringsTest() {
         RingReveal junk;
         junk.commit_height = 1;
         junk.salt = Bytes(kRingSaltBytes, 0);
-        junk.certificate = Bytes(300000, 1);
+        junk.certificate = Bytes(static_cast<std::size_t>(e.parameterAt(Param::RingBatchBytes, e.height() + 1)) + 1, 1);
         big.batch.reveals.push_back(junk);
         require(!e.checkRingBatch(big, error) && contains(error, "size limit"), "an oversized batch is refused: " + error);
         auto bad = *v;
@@ -1351,7 +1351,7 @@ void ringsByzantineTest() {
                 if ((oversized + miscredited) % 2 == 0 || p->value.ring.batch.blocks.empty()) {
                     RingReveal junk;
                     junk.salt = Bytes(kRingSaltBytes, 0);
-                    junk.certificate = Bytes(300000, 1);
+                    junk.certificate = Bytes(static_cast<std::size_t>(h.nodes[byz]->engine().parameterAt(Param::RingBatchBytes, p->id.h)) + 1, 1);
                     p->value.ring.batch.reveals.push_back(junk);
                     ++oversized;
                 } else {

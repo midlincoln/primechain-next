@@ -78,7 +78,7 @@ so far. The rest is designed or planned.
 | 32 | inert rows before a paid one, at most | 1,024 | R7 |
 | 33 | segments per signature, at most | 64 | R7 |
 | 34 | mining message size, at most | 256 KB | ring-records |
-| 35 | ring batch size, at most | 256 KB | ring-records |
+| 35 | ring batch size, at most | 512 KB (never below parameter 29 plus 512 bytes, so any valid reveal fits; checked at every vote) | ring-records |
 | 65 | **generator size, at most (each coefficient of a recorded generator), a policy tool** | 4,096 bytes (proposed; covers real rings with regulator up to about 22,000, D near 10⁸) | R10, ring-records section 5 |
 | 36 | pause of one ring / all rings | off | R2, engine (B3.6: all rings is this parameter; one ring is a vote kind on the ring record) |
 | | **Cash (closed at launch)** | | |

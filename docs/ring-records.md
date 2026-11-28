@@ -75,12 +75,12 @@ current payee.
   ε need not be fundamental. For D < 0 the units are few and all have norm 1.
 
 **Ring batch** (third kind of decision): version, network, open height h, hash of main block
-h − 1, ring blocks and reveals; at most 256 KB*. Allowed when the previous decision was not a
+h − 1, ring blocks and reveals; at most 512 KB*. Allowed when the previous decision was not a
 ring batch. A proposer with a valid closing prime proposes it first; otherwise it alternates
 between ranges and ring batches. Built in B3.6 (proposed details there: one batch per main
 block; a batch leads only in round 0; rows, then reveals, then openings; reveals put in first).
-Note: a certificate may be as large as the batch limit (both 256 KB*), so a reveal near the
-certificate limit cannot fit in a batch; one of the two limits should be adjusted.
+The batch limit (parameter 35) is never below the certificate limit (29) plus 512 bytes, so
+any valid reveal fits in a batch; a vote that would break this is refused (2026-11-28).
 
 **Ring block** (one per ring per batch): ring number, previous ring block hash, start
 prime, then groups (miner, hash of the signed `RING_WORK`, its accepted segments).

@@ -644,6 +644,13 @@ void parameterTests() {
             require(s.min <= s.start && s.start <= s.max, std::string("default within bounds: ") + s.name);
         }
         require(checkParameters(defaultParameters()).empty(), "defaults pass");
+        {  // B3.6: a ring batch must hold a certificate at its limit plus 512 bytes
+            ParameterValues v = defaultParameters();
+            v[pid(Param::RingBatchBytes)] = v[pid(Param::CertificateBytes)] + 511;
+            require(!checkParameters(v).empty(), "batch limit below certificate limit + 512 refused");
+            v[pid(Param::RingBatchBytes)] = v[pid(Param::CertificateBytes)] + 512;
+            require(checkParameters(v).empty(), "batch limit = certificate limit + 512 accepted");
+        }
         Policy bad;
         bad.parameters[pid(Param::MaxRangeComposites)] = 1025;
         bool threw = false;
