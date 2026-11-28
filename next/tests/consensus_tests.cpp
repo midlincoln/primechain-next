@@ -1,12 +1,15 @@
 // Tests for PrimeChain Next A3.1: the consensus core on a simulated network.
 // Usage: primechain-next-consensus-tests chain|crash|g2|partition|byzantine4|byzantine3|governance|retention|header|fuzz [n]
+//        | rings | rings_crash | rings_partition | rings_byzantine | rings_fuzz [n]   (B3.6: ring batches in consensus)
 #include "primechain/crypto/signature.hpp"
 #include "primechain_next/consensus.hpp"
 #include "primechain_next/merkle.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <queue>
@@ -119,6 +122,82 @@ GovernanceTx governanceTx(const Key& signer, const GovernanceProposal& p, Govern
     return t;
 }
 
+// ---------------------------------------------------------------- ring traffic (B3.6)
+// The harness mines two imaginary quadratic rings, Q(i) and Q(sqrt -7). Their certificates list no
+// generators (M_K < 2); row generators are found by search.
+Bytes ringCertificate(long d) {
+    QuadCertificate c;
+    c.d = Integer(d);
+    if (d == -4) c.factors = {{Integer(2), 2}};
+    else c.factors = {{Integer(-d), 1}};
+    return encode(c);
+}
+
+QuadElement generatorFor(long d, std::uint64_t q) {
+    static std::map<std::pair<long, std::uint64_t>, QuadElement> cache;
+    if (const auto it = cache.find({d, q}); it != cache.end()) return it->second;
+    const Integer D(d), Q(q);
+    const long bound = 2 * static_cast<long>(std::sqrt(static_cast<double>(q))) + 3;
+    for (long c1 = -bound; c1 <= bound; ++c1)
+        for (long c0 = -bound; c0 <= bound; ++c0) {
+            const QuadElement g{Integer(c0), Integer(c1)};
+            if (quadNorm(D, g) != Q) continue;
+            const auto r = derivedRoot(Q, g);
+            if (!r || !isRoot(D, Q, *r)) continue;
+            const Integer other = otherRoot(D, Q, *r);
+            if (rowType(D, Q) == RowType::Ramified ? other != *r : other <= *r) continue;
+            return cache[{d, q}] = g;
+        }
+    throw std::runtime_error("no generator found");
+}
+
+// R7: the rows of the segment starting at `start` (default limits 32 paid, 1,024 inert).
+std::vector<std::uint64_t> segmentRows(long d, std::uint64_t start) {
+    std::vector<std::uint64_t> rows;
+    std::uint64_t paid = 0;
+    for (std::uint64_t q = start;; q = nextPrime(q)) {
+        rows.push_back(q);
+        if (rowType(Integer(d), Integer(q)) != RowType::Inert) {
+            if (++paid == 32) return rows;
+        } else if (paid > 0 || rows.size() == 1024) {
+            return rows;
+        }
+    }
+}
+
+Segment makeSegment(long d, std::uint64_t start) {
+    Segment s;
+    s.ring_id = quadraticRingId(Integer(d));
+    s.start = start;
+    for (const auto q : segmentRows(d, start)) {
+        s.rows.push_back(rowType(Integer(d), Integer(q)));
+        if (s.rows.back() != RowType::Inert) s.generators.push_back(generatorFor(d, q));
+    }
+    return s;
+}
+
+// Up to three complete segments of `ring` from its next prime, signed by m (none if no segment is
+// complete below the chain frontier yet).
+RingWork workFor(const Engine& e, const Key& m, const RingEntry& ring) {
+    RingWork w;
+    w.network_id = e.policy().network_id;
+    w.ring_id = ring.ring_id;
+    w.miner = m.address;
+    w.start = nextPrime(ring.frontier.get_ui());
+    const long d = ring.d.get_si();
+    for (std::uint64_t at = w.start.get_ui(); w.segments.size() < 3;) {
+        const auto rows = segmentRows(d, at);
+        if (rows.back() > e.chainFrontier().get_ui()) break;
+        w.segments.push_back(makeSegment(d, at));
+        at = nextPrime(rows.back());
+    }
+    if (!w.segments.empty()) {
+        if (!e.hasKey(m.address)) w.public_key = m.pair.public_key;
+        w.signature = sign(m, ringWorkSigningPayload(w));
+    }
+    return w;
+}
+
 std::string tempDir() {
     std::string tmpl = (fs::temp_directory_path() / "pcnext-consensus-XXXXXX").string();
     require(mkdtemp(tmpl.data()) != nullptr, "temp dir");
@@ -137,6 +216,7 @@ struct Options {
     std::uint64_t chunk{1000};   // largest range a miner submits (small values give several ranges per block)
     Policy policy{};
     Retention retention{};
+    bool rings{false};           // B3.6: ring traffic (commits, reveals, work) from the miner
 };
 
 struct Harness {
@@ -168,6 +248,19 @@ struct Harness {
     std::optional<Message> last_submission;
     std::pair<Hash256, std::uint64_t> last_key{};
     std::map<InstanceId, Hash256> agreed;
+    bool mining{true};
+    // B3.6 ring traffic: the miner opens Q(i), then Q(sqrt -7), and mines both.
+    struct RingPlan {
+        long d;
+        std::uint8_t tag;
+        int stage{0};  // 0 to commit, 1 committed, 2 revealed, 3 open
+        RingCommit commit{};
+        RingReveal reveal{};
+    };
+    std::vector<RingPlan> ring_plans{{-4, 0x41}, {-7, 0x42}};
+    std::map<std::uint64_t, std::pair<std::pair<Integer, Integer>, RingWork>> ring_works;  // ring -> (key, work)
+    std::function<bool(const Message&)> ring_filter;  // drops ring traffic from the miner when false
+    std::size_t ring_messages{0};
     std::vector<std::optional<InstanceId>> checked;
     std::size_t conflicts{0};
 
@@ -280,10 +373,116 @@ struct Harness {
             else last_submission = makeRange(e, miner, accepted + 1, std::min(p - 1, accepted + opt.chunk));
         }
         for (std::uint32_t to = 0; to < nodes.size(); ++to) send(kMinerId, to, *last_submission);
+        if (opt.rings) ringTraffic(e);
         for (auto& [m, left] : gossip)
             if (left-- > 0)
                 for (std::uint32_t to = 0; to < nodes.size(); ++to) send(kMinerId, to, m);
         std::erase_if(gossip, [](const auto& g) { return g.second <= 0; });
+    }
+
+    void sendRing(const Message& m) {
+        if (ring_filter && !ring_filter(m)) return;
+        ++ring_messages;
+        for (std::uint32_t to = 0; to < nodes.size(); ++to) send(kMinerId, to, m);
+    }
+
+    // Commit, reveal and mine, each message re-sent on every miner tick while it is useful.
+    void ringTraffic(const Engine& e) {
+        bool earlier_open = true;
+        for (auto& p : ring_plans) {
+            const Hash256 id = quadraticRingId(Integer(p.d));
+            if (e.rings().byId(id)) p.stage = 3;
+            if (p.stage == 0 && earlier_open && e.height() >= 4) {
+                const Amount need = *Amount::fromRaw(e.parameter(Param::RingDeposit)).add(Amount::fromRaw(e.parameter(Param::MinFee)));
+                for (const auto& x : e.assets().assets())
+                    if (x.isMain() && !(e.balance(miner.address, x.q) < need)) {
+                        RingCommit& c = p.commit;
+                        c.network_id = e.policy().network_id;
+                        c.discoverer = miner.address;
+                        c.commitment = ringCommitment(c.network_id, miner.address, Bytes(kRingSaltBytes, p.tag),
+                                                      certificateHash(1, 1, ringCertificate(p.d)));
+                        c.deposit_asset = x.q;
+                        c.deposit = Amount::fromRaw(e.parameter(Param::RingDeposit));
+                        c.nonce = e.nonce(miner.address) + 1;
+                        c.signature = sign(miner, ringCommitSigningPayload(c));
+                        p.stage = 1;
+                        break;
+                    }
+            }
+            if (p.stage == 1) {
+                for (const auto& [key, c] : e.rings().commits())
+                    if (c.commitment == p.commit.commitment) {
+                        p.reveal.commit_height = key.first;
+                        p.reveal.commit_index = key.second;
+                        p.reveal.salt = Bytes(kRingSaltBytes, p.tag);
+                        p.reveal.certificate = ringCertificate(p.d);
+                        p.stage = 2;
+                    }
+                if (p.stage == 1) sendRing(p.commit);
+            }
+            if (p.stage == 2) {
+                const OpenCommit* c = e.rings().commit(p.reveal.commit_height, p.reveal.commit_index);
+                if (c && !c->revealed) sendRing(p.reveal);
+            }
+            earlier_open = p.stage == 3;
+        }
+        for (const auto& [number, ring] : e.rings().rings()) {
+            if (ring.paused) continue;
+            const std::pair<Integer, Integer> key{ring.frontier, e.chainFrontier()};
+            auto& slot = ring_works[number];
+            if (slot.first != key || slot.second.segments.empty()) {
+                slot.first = key;
+                slot.second = workFor(e, miner, ring);
+            }
+            if (!slot.second.segments.empty()) sendRing(slot.second);
+        }
+    }
+
+    // Stop the miner, let every node finish what is pending, then require identical engines and
+    // identical rings files (bit for bit on disk when persistent), and R1's sequence rule.
+    void requireRingsIdentical(const std::string& what) {
+        mining = false;
+        runUntil([] { return false; }, 120'000);
+        mining = true;
+        next_mine = now;
+        const Node* ref = nullptr;
+        std::size_t first = 0;
+        for (std::size_t i = 0; i < nodes.size(); ++i) {
+            if (!nodes[i]) continue;
+            const Engine& e = nodes[i]->engine();
+            if (!ref) { ref = &*nodes[i]; first = i; continue; }
+            const Engine& r = ref->engine();
+            require(nodes[i]->instance() == ref->instance() && e.tip() == r.tip() && e.stateRoot() == r.stateRoot() &&
+                        e.rings() == r.rings() && e.assets() == r.assets() && e.lastRingBatchHeight() == r.lastRingBatchHeight(),
+                    what + ": identical engines and ring state at node " + std::to_string(i));
+            if (opt.persistent) {
+                auto slurp = [](const std::string& path) {
+                    std::ifstream in(path, std::ios::binary);
+                    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                };
+                require(slurp(dirs[i] + "/rings.dat") == slurp(dirs[first] + "/rings.dat") &&
+                            slurp(dirs[i] + "/blocks.dat") == slurp(dirs[first] + "/blocks.dat"),
+                        what + ": identical rings file and block file at node " + std::to_string(i));
+            } else {
+                require(e.ringBatches().size() == r.ringBatches().size(), what + ": same number of ring batches");
+                for (std::size_t k = 0; k < e.ringBatches().size(); ++k)
+                    require(encode(e.ringBatches()[k]) == encode(r.ringBatches()[k]), what + ": identical ring batches");
+            }
+        }
+        for (const auto& n : nodes) {
+            if (!n) continue;
+            bool last_ring = false;
+            for (const auto& [id, d] : n->decisions()) {
+                const bool ring = d.value.kind == Value::Kind::RingBatch;
+                require(!(ring && last_ring), what + ": never two ring batches in a row");
+                last_ring = ring;
+            }
+        }
+    }
+    std::size_t ringDecisions(std::size_t i) const {
+        std::size_t c = 0;
+        for (const auto& [id, d] : nodes[i]->decisions()) c += d.value.kind == Value::Kind::RingBatch;
+        return c;
     }
 
     void checkSafety() {
@@ -306,9 +505,10 @@ struct Harness {
             if (n)
                 if (auto d = n->nextDeadline(); d && (!timer || *d < *timer)) timer = d;
         const std::uint64_t msg = queue.empty() ? UINT64_MAX : queue.top().at;
-        const std::uint64_t t = std::min({msg, timer.value_or(UINT64_MAX), next_mine});
+        const std::uint64_t mine_at = mining ? next_mine : UINT64_MAX;
+        const std::uint64_t t = std::min({msg, timer.value_or(UINT64_MAX), mine_at});
         now = std::max(now, t);
-        if (t == next_mine) {
+        if (t == mine_at) {
             mine();
         } else if (timer && t == *timer) {
             for (std::uint32_t i = 0; i < nodes.size(); ++i)
@@ -534,12 +734,13 @@ void g2Test() {
 }
 
 // ---------------------------------------------------------------- (d) partitions and loss
-void partitionTest() {
+void partitionTest(bool rings = false) {
     Options o;
     o.validators = 4;
     o.mldsa = false;
     o.persistent = true;
     o.chunk = 5;
+    o.rings = rings;
     Harness net(o);
     net.drop = 0.2;
     net.dmax = 200;
@@ -572,8 +773,17 @@ void partitionTest() {
     const auto h4 = net.reference()->engine().height();
     require(net.runUntil([&] { return net.reached(h4 + 1); }, 10'000'000), "converge");
     net.requireConsistent("partition");
-    std::cout << "consensus partition: PASS (n=4, 20% loss, 2|2 split decides nothing, 3|1 split continues, restart "
-              << "and catch-up; height " << net.minHeight() << ", " << checks << " checks)\n";
+    if (rings) {
+        net.requireRingsIdentical("partition with rings");
+        require(net.reference()->engine().rings().rings().size() == 2 && net.ringDecisions(0) > 0, "rings opened and mined");
+    }
+    std::cout << "consensus partition" << (rings ? " with rings" : "")
+              << ": PASS (n=4, 20% loss, 2|2 split decides nothing, 3|1 split continues, restart "
+              << "and catch-up; height " << net.minHeight();
+    if (rings)
+        std::cout << ", " << net.reference()->engine().rings().rings().size() << " rings, "
+                  << net.reference()->engine().ringBatches().size() << " ring batches";
+    std::cout << ", " << checks << " checks)\n";
 }
 
 // ---------------------------------------------------------------- (e) n = 4, one Byzantine equivocator
@@ -902,9 +1112,9 @@ void retentionTest() {
 }
 
 // ---------------------------------------------------------------- (i) seeded random-schedule safety fuzz
-void fuzzTest(std::uint64_t seeds) {
+void fuzzTest(std::uint64_t seeds, bool rings = false) {
     const auto start = std::chrono::steady_clock::now();
-    std::uint64_t decisions = 0, crashes = 0, partitions = 0;
+    std::uint64_t decisions = 0, crashes = 0, partitions = 0, ring_batches = 0;
     for (std::uint64_t seed = 1; seed <= seeds; ++seed) {
         std::mt19937_64 r(seed * 7919);
         Options o;
@@ -913,6 +1123,7 @@ void fuzzTest(std::uint64_t seeds) {
         o.persistent = true;
         o.seed = seed;
         o.chunk = 2 + r() % 6;
+        o.rings = rings;
         Harness net(o);
         const std::size_t n = o.validators, f = (n - 1) / 3 == 0 ? 1 : (n - 1) / 3;  // crash budget
         net.drop = (r() % 30) / 100.0;
@@ -960,11 +1171,270 @@ void fuzzTest(std::uint64_t seeds) {
         require(net.runUntil([&] { return net.reached(h + 3); }, 50'000'000),
                 "fuzz seed " + std::to_string(seed) + ": progress after healing");
         net.requireConsistent("fuzz seed " + std::to_string(seed));
+        if (rings) {
+            net.requireRingsIdentical("fuzz seed " + std::to_string(seed));
+            for (std::size_t i = 0; i < net.nodes.size(); ++i) ring_batches += net.ringDecisions(i);
+        }
         decisions += net.agreed.size();
     }
-    std::cout << "consensus fuzz: PASS (" << seeds << " seeds, n=3..5, loss up to 29%, delays up to 420 ms, "
+    std::cout << "consensus fuzz" << (rings ? " with rings" : "") << ": PASS (" << seeds << " seeds, n=3..5, loss up to 29%, delays up to 420 ms, "
               << partitions << " partitions, " << crashes << " crash/restarts, " << decisions
-              << " instances decided, no conflicts; " << seconds(start) << " s wall, " << checks << " checks)\n";
+              << " instances decided" << (rings ? ", " + std::to_string(ring_batches) + " ring batch decisions held" : std::string())
+              << ", no conflicts; " << seconds(start) << " s wall, " << checks << " checks)\n";
+}
+
+
+// ---------------------------------------------------------------- (j) B3.6: ring batches in consensus
+// A detached engine (a copy of a non-persistent node's) advanced by one block: a range over the gap,
+// then the prime.
+void closeOn(Engine& e, const Key& m) {
+    std::string error;
+    const auto f = e.acceptedFrontier().get_ui(), p = nextPrime(e.chainFrontier().get_ui());
+    if (f + 1 < p) require(e.applyDecidedRange(makeRange(e, m, f + 1, p - 1), error), "range: " + error);
+    const auto prime = makePrime(e, m, p);
+    const auto contents = e.buildPrimeContents(prime, error);
+    require(contents && e.applyDecidedPrime(prime, *contents, error), "prime: " + error);
+}
+
+bool contains(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
+
+void ringsTest() {
+    const auto start = std::chrono::steady_clock::now();
+    Options o;
+    o.mldsa = false;
+    o.rings = true;
+    o.chunk = 6;
+    Harness net(o);
+    // 1. Ring traffic through consensus: both rings open (commit, reveal in a ring batch) and are mined.
+    require(net.runUntil(
+                [&] {
+                    const Engine& e = net.nodes[0]->engine();
+                    return e.rings().rings().size() == 2 && e.rings().ring(2)->frontier > 0 && net.reached(25);
+                },
+                100'000'000),
+            "both rings open and are mined");
+    net.requireConsistent("rings");
+    net.requireRingsIdentical("rings");
+    const std::size_t batches0 = net.ringDecisions(0);
+    require(batches0 > 0, "ring batches are decided");
+    std::cout << "  traffic: height " << net.minHeight() << ", " << net.reference()->engine().ringBatches().size()
+              << " ring batches, " << net.ring_messages << " ring messages\n";
+
+    // 2. Missing: no ring traffic reaches the validators; blocks still close, no ring batch.
+    {
+        net.ring_filter = [](const Message&) { return false; };
+        const std::uint64_t h0 = net.reference()->engine().height();
+        require(net.runUntil([&] { return net.reached(h0 + 6); }, 100'000'000), "blocks close without ring traffic");
+        // Works queued before the filter may still fill the next batch or two; then there are none.
+        for (const auto& b : net.reference()->engine().ringBatches())
+            require(b.open_height < h0 + 3 || b.open_height > h0 + 6, "no ring batch without ring work");
+        net.ring_filter = nullptr;
+    }
+    // 3. Late: every ring batch proposal for block T is held back and delivered after T is sealed.
+    {
+        const std::uint64_t target = net.reference()->engine().height() + 2;
+        std::vector<Proposal> held;
+        net.filter = [&](std::uint32_t, std::uint32_t, const Message& m) {
+            if (const auto* p = std::get_if<Proposal>(&m); p && p->id.h == target && p->value.kind == Value::Kind::RingBatch) {
+                held.push_back(*p);
+                return false;
+            }
+            return true;
+        };
+        require(net.runUntil([&] { return net.reached(target); }, 100'000'000), "block T closes while its ring batch is late");
+        net.filter = nullptr;
+        require(!held.empty(), "ring batch proposals for T were made (and held back)");
+        for (std::size_t i = 0; i < net.nodes.size(); ++i)
+            for (const auto& b : net.nodes[i]->engine().ringBatches()) require(b.open_height != target, "no ring batch at T");
+        const Hash256 tip = net.nodes[0]->engine().tip();
+        for (const auto& p : held)
+            for (std::uint32_t to = 0; to < net.nodes.size(); ++to) net.send(p.proposer, to, p);
+        const std::uint64_t seen = net.reference()->engine().lastRingBatchHeight();
+        require(net.runUntil([&] { return net.reference()->engine().lastRingBatchHeight() > std::max(seen, target); },
+                             100'000'000),
+                "the late proposals change nothing; the work is decided in a later block");
+        (void)tip;
+        std::cout << "  late: " << held.size() << " ring batch proposals for block " << target
+                  << " held back; the block closed without a batch\n";
+    }
+    net.requireConsistent("rings late");
+    net.requireRingsIdentical("rings late");
+
+    // 4. Engine checks behind validity, on a detached copy: oversized, invalid, a second batch,
+    //    late after the prime, and a header whose extension_root lacks the batch.
+    {
+        std::string error;
+        Engine e = net.nodes[0]->engine();  // non-persistent: a detached copy
+        closeOn(e, net.miner);              // a fresh block with no batch yet
+        RingWork w = workFor(e, net.miner, *e.rings().ring(1));
+        for (int i = 0; i < 40 && w.segments.empty(); ++i) {  // until a segment of ring 1 is complete
+            closeOn(e, net.miner);
+            w = workFor(e, net.miner, *e.rings().ring(1));
+        }
+        require(!w.segments.empty() && e.submitRingWork(w, error), "work: " + error);
+        const auto v = e.buildRingBatch();
+        require(v.has_value() && !v->batch.blocks.empty(), "a ring batch to propose");
+        Engine without = e;  // the same state without the batch
+        auto big = *v;
+        RingReveal junk;
+        junk.commit_height = 1;
+        junk.salt = Bytes(kRingSaltBytes, 0);
+        junk.certificate = Bytes(300000, 1);
+        big.batch.reveals.push_back(junk);
+        require(!e.checkRingBatch(big, error) && contains(error, "size limit"), "an oversized batch is refused: " + error);
+        auto bad = *v;
+        bad.batch.blocks[0].groups[0].miner = newKey().address;
+        require(!e.checkRingBatch(bad, error) && contains(error, "wrong miner credit"), "a batch with a wrong credit is refused");
+        auto unmatched = *v;
+        junk.certificate = ringCertificate(-3);
+        unmatched.batch.reveals.push_back(junk);
+        require(!e.checkRingBatch(unmatched, error) && contains(error, "reveal"), "an unmatched reveal invalidates a batch");
+        require(e.checkRingBatch(*v, error) && e.applyDecidedRingBatch(*v, error), "the batch applies: " + error);
+        require(!e.checkRingBatch(*v, error) && contains(error, "one ring batch per main block"), "no second batch in a block");
+        // The prime as a proposer without the batch would build it: refused where the batch is decided.
+        const auto f = e.acceptedFrontier().get_ui(), p = nextPrime(e.chainFrontier().get_ui());
+        if (f + 1 < p) {
+            const RangeSubmission r = makeRange(e, net.miner, f + 1, p - 1);
+            require(e.applyDecidedRange(r, error) && without.applyDecidedRange(r, error), "range: " + error);
+        }
+        const auto prime = makePrime(e, net.miner, p);
+        const auto stale = without.buildPrimeContents(prime, error);
+        require(stale.has_value(), "contents without the batch: " + error);
+        require(!e.checkPrimeValue(prime, *stale, error) && contains(error, "header hash"),
+                "a prime whose header lacks the decided batch is refused: " + error);
+        const auto contents = e.buildPrimeContents(prime, error);
+        require(contents && e.applyDecidedPrime(prime, *contents, error), "prime: " + error);
+        const auto plain = without.applyDecidedPrime(prime, *stale, error);
+        require(plain && plain->header.extension_root != e.blocks().back().header.extension_root,
+                "a prime closes without the batch; its extension_root differs");
+        const Hash256 root = e.stateRoot();
+        require(!e.applyDecidedRingBatch(*v, error) && contains(error, "not for the next main block") && e.stateRoot() == root,
+                "a batch arriving after its block's prime is refused, state unchanged");
+    }
+    std::cout << "consensus rings: PASS (n=3, height " << net.minHeight() << ", " << net.ringDecisions(0)
+              << " ring batch decisions at node 0, missing and late batches, oversized, invalid, second-in-a-row "
+              << "and wrong-root values refused; " << seconds(start) << " s wall, " << checks << " checks)\n";
+}
+
+// n = 4 with one Byzantine validator: it equivocates (as in byzantine4) and turns its ring batch
+// proposals into oversized or wrongly credited ones, and proposes a ring batch right after a ring
+// batch. The honest three decide every block and keep identical rings files.
+void ringsByzantineTest() {
+    Options o;
+    o.validators = 4;
+    o.mldsa = false;
+    o.persistent = true;
+    o.rings = true;
+    o.chunk = 6;
+    Harness net(o);
+    const std::uint32_t byz = 3;
+    std::size_t oversized = 0, miscredited = 0, twice = 0;
+    net.tamper[byz] = [&](Harness& h, const Outgoing& out, std::vector<std::pair<std::uint32_t, Message>>& sends) {
+        Message m = out.message;
+        if (auto* v = std::get_if<Vote>(&m)) {
+            for (const auto to : h.peers(byz, out)) {
+                if (to == 2) {
+                    std::optional<Hash256> alt;
+                    if (!v->value) alt = sha3(Bytes{1, 2, 3});
+                    sends.emplace_back(to, h.nodes[byz]->signVote(v->id, v->round, v->phase, alt));
+                } else {
+                    sends.emplace_back(to, m);
+                }
+            }
+            return;
+        }
+        if (auto* p = std::get_if<Proposal>(&m); p && h.nodes[byz]->selfIndex() == p->proposer) {  // its own
+            const auto& decided = h.nodes[byz]->decisions();
+            const bool after_ring = !decided.empty() && decided.rbegin()->second.value.kind == Value::Kind::RingBatch &&
+                                    decided.rbegin()->first.h == p->id.h;
+            if (p->value.kind == Value::Kind::RingBatch) {
+                if ((oversized + miscredited) % 2 == 0 || p->value.ring.batch.blocks.empty()) {
+                    RingReveal junk;
+                    junk.salt = Bytes(kRingSaltBytes, 0);
+                    junk.certificate = Bytes(300000, 1);
+                    p->value.ring.batch.reveals.push_back(junk);
+                    ++oversized;
+                } else {
+                    p->value.ring.batch.blocks[0].groups[0].miner = h.vals[0].payout.address;
+                    ++miscredited;
+                }
+                h.nodes[byz]->signProposal(*p);
+            } else if (after_ring) {  // the decided ring batch again, right after it
+                p->value.kind = Value::Kind::RingBatch;
+                p->value.ring = decided.rbegin()->second.value.ring;
+                h.nodes[byz]->signProposal(*p);
+                ++twice;
+            }
+        }
+        for (const auto to : h.peers(byz, out)) sends.emplace_back(to, m);
+    };
+    require(net.runUntil(
+                [&] {
+                    const Engine& e = net.nodes[0]->engine();
+                    return net.reached(40) && e.rings().rings().size() == 2 && oversized > 0 && miscredited > 0 && twice > 0;
+                },
+                200'000'000),
+            "n=4 progresses with ring traffic and one Byzantine validator (oversized " + std::to_string(oversized) +
+                ", miscredited " + std::to_string(miscredited) + ", twice " + std::to_string(twice) + ")");
+    net.requireConsistent("rings byzantine");
+    net.tamper.clear();
+    net.requireRingsIdentical("rings byzantine");
+    std::size_t evidence = 0;
+    for (std::uint32_t i = 0; i < 3; ++i) evidence += net.nodes[i]->evidence().size();
+    require(evidence > 0, "equivocation evidence recorded");
+    for (const auto& b : net.nodes[0]->engine().ringBatches())
+        require(encode(b).size() <= net.nodes[0]->engine().parameterAt(Param::RingBatchBytes, b.open_height),
+                "no oversized batch was decided");
+    std::cout << "consensus rings_byzantine: PASS (n=4, height " << net.minHeight() << ", " << oversized
+              << " oversized and " << miscredited << " miscredited ring batch proposals, " << twice
+              << " second batches in a row, all refused; " << net.ringDecisions(0) << " ring batches decided; "
+              << evidence << " evidence records; " << checks << " checks)\n";
+}
+
+// Crashes with ring traffic: a node crashes right after deciding a ring batch (mid-sequence: the
+// batch is in its rings file, the block is not sealed) and restarts; another crashes for a stretch.
+void ringsCrashTest() {
+    Options o;
+    o.mldsa = false;
+    o.persistent = true;
+    o.rings = true;
+    o.chunk = 4;  // several range decisions per block, so batches fall between them
+    o.policy.snapshot_interval = 7;
+    Harness net(o);
+    require(net.runUntil([&] { return net.nodes[0]->engine().rings().rings().size() == 2 && net.reached(20); }, 100'000'000),
+            "rings open");
+    std::size_t mid = 0;
+    for (int round = 0; round < 3; ++round) {
+        // Wait until node 2's latest decision is a ring batch, then crash it at once.
+        require(net.runUntil(
+                    [&] {
+                        const auto& d = net.nodes[2]->decisions();
+                        return !d.empty() && d.rbegin()->second.value.kind == Value::Kind::RingBatch;
+                    },
+                    100'000'000),
+                "a ring batch decided");
+        const std::uint64_t h = net.nodes[2]->engine().height() + 1;
+        require(net.nodes[2]->engine().lastRingBatchHeight() == h, "the batch belongs to the open block");
+        net.crash(2);
+        ++mid;
+        net.runUntil([] { return false; }, 3'000 + 2'000 * static_cast<std::uint64_t>(round));
+        net.restart(2);
+        require(net.nodes[2]->engine().lastRingBatchHeight() >= h, "the restarted node has the batch from its rings file");
+        const auto h0 = net.reference()->engine().height();
+        require(net.runUntil([&] { return net.reached(h0 + 3); }, 100'000'000), "progress after the restart");
+        net.requireConsistent("rings crash " + std::to_string(round));
+    }
+    // A longer outage of node 1 while ring batches keep being decided by the other two.
+    net.crash(1);
+    const auto h1 = net.reference()->engine().height();
+    require(net.runUntil([&] { return net.nodes[0]->engine().height() >= h1 + 8; }, 100'000'000), "two of three continue");
+    net.restart(1);
+    require(net.runUntil([&] { return net.reached(h1 + 10); }, 100'000'000), "node 1 catches up");
+    net.requireConsistent("rings crash");
+    net.requireRingsIdentical("rings crash");
+    std::cout << "consensus rings_crash: PASS (n=3, " << mid << " crashes right after a ring batch decision, one outage; height "
+              << net.minHeight() << ", " << net.ringDecisions(0)
+              << " ring batch decisions at node 0, identical rings files; " << checks << " checks)\n";
 }
 
 }  // namespace
@@ -983,9 +1453,14 @@ int main(int argc, char** argv) {
         else if (mode == "retention") retentionTest();
         else if (mode == "header") headerTest();
         else if (mode == "fuzz") fuzzTest(arg ? arg : 20);
+        else if (mode == "rings") ringsTest();  // B3.6
+        else if (mode == "rings_crash") ringsCrashTest();
+        else if (mode == "rings_partition") partitionTest(true);
+        else if (mode == "rings_byzantine") ringsByzantineTest();
+        else if (mode == "rings_fuzz") fuzzTest(arg ? arg : 4, true);
         else {
             std::cerr << "usage: primechain-next-consensus-tests chain|crash|g2|partition|byzantine4|byzantine3|"
-                         "governance|retention|header|fuzz [n]\n";
+                         "governance|retention|header|fuzz [n]|rings|rings_crash|rings_partition|rings_byzantine|rings_fuzz [n]\n";
             return 2;
         }
     } catch (const std::exception& e) {

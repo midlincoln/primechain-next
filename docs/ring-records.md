@@ -44,7 +44,8 @@ sealed; otherwise as soon as each earlier commit has been revealed or has expire
 most 10 blocks after its own commit. The earliest revealed commit for a ring gets it.
 Example: A commits at block 100, B commits the same ring at 101 and reveals at 102, A
 reveals at 105. B waits; at 105 the ring opens for A, and B gets the deposit back.
-Proposed: blocks under a pause of all rings do not count toward the 10.
+Blocks under a pause of all rings do not count toward the 10 (built in B3.6: each such
+block inside a commit's window moves its last block one further).
 
 The deposit is returned for every valid reveal, including a loser's, and otherwise
 goes to the fee pool.
@@ -73,16 +74,20 @@ current payee.
   valid only if neither multiplying nor dividing by ε makes its encoding shorter.
   ε need not be fundamental. For D < 0 the units are few and all have norm 1.
 
-**Ring batch** (third kind of decision): version, network, open height h, hash of
-main block h − 1, ring blocks and reveals; at most 256 KB*. Allowed when the previous
-decision was not a ring batch. A proposer with a valid closing prime proposes it first;
-otherwise it alternates between ranges and ring batches.
+**Ring batch** (third kind of decision): version, network, open height h, hash of main block
+h − 1, ring blocks and reveals; at most 256 KB*. Allowed when the previous decision was not a
+ring batch. A proposer with a valid closing prime proposes it first; otherwise it alternates
+between ranges and ring batches. Built in B3.6 (proposed details there: one batch per main
+block; a batch leads only in round 0; rows, then reveals, then openings; reveals put in first).
+Note: a certificate may be as large as the batch limit (both 256 KB*), so a reveal near the
+certificate limit cannot fit in a batch; one of the two limits should be adjusted.
 
 **Ring block** (one per ring per batch): ring number, previous ring block hash, start
 prime, then groups (miner, hash of the signed `RING_WORK`, its accepted segments).
 
-**`extension_root`:** Merkle root over the ring records (with tip hashes), ordered by
-number, plus the open commits and reveals. Ring money counts from the main block that
+**`extension_root`:** Merkle root over the ring records (with tip hashes and pause state),
+ordered by number, plus the open commits, plus the hash of the ring batch decided for the
+block (its ring blocks and reveals; B3.6). Ring money counts from the main block that
 first includes it.
 
 ## 4. Payouts without payout records (agreed)

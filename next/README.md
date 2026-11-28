@@ -251,7 +251,8 @@ amount, nonce, optional key, signature), `RingReveal` (commit reference (height,
 certificate type, version, bytes; no signature), `RingPayee` (ring, new payee, nonce, signature of
 the current payee). commitment = sha3("ring-commitment", network, discoverer, salt,
 sha3("certificate", type, version, bytes)). Blocks carry `ring_commits`, `ring_payees` and
-`ring_reveals`; commits and payee changes are leaves of `transactions_root`.
+`ring_reveals` (B3.6: reveals moved into ring batches; blocks carry `ring_commits` and `ring_payees`);
+commits and payee changes are leaves of `transactions_root`.
 
 - **Commit:** accepted only while gate 1 (`RingGateOpen`) is open (refused on arrival when
   closed, nothing taken) and while fewer than kappa (`RingsPerEpoch`, new parameter 37) rings
@@ -291,10 +292,10 @@ eligibility uses the frontier at the end of the previous block; a reveal of a ri
 before the commit's block forfeits, one opened in or after it is a refunded loser; kappa counts
 openings, so the commits already in flight can push an epoch past it; kappa starts at 100 per
 epoch (the doc leaves it to be set); a payee change applies from its block, the last in a block
-counts; the ring frontier starts at 0 and the tip at a genesis hash. Not built: "blocks under a
-pause of all rings do not count toward the 10" (pausing comes with B3.6).
+counts; the ring frontier starts at 0 and the tip at a genesis hash. "Blocks under a pause of all
+rings do not count toward the 10" is built in B3.6 (below).
 
-**How B3.5 and B3.6 plug in** (B3.5 is now built, below). B3.5 reads D and the unit from `RingEntry` for `checkSegment`,
+**How B3.5 and B3.6 plug in** (both are now built, below). B3.5 reads D and the unit from `RingEntry` for `checkSegment`,
 advances `frontier` and `tip` as ring blocks are accepted, and records rows in the ledger.
 B3.6 moves `ring_reveals` from the main block into ring batches: the batch handler calls the
 same `applyRingReveal` then `openRings` for the batch's open height (expiry stays at main
@@ -386,7 +387,7 @@ primes are version 2. Under A4, plan items 1 (which rings count for the backlog)
 count as open) no longer matter: no share depends on the other rings. Ring IDs in works, numbers in
 blocks (ring-records section 1).
 
-**How B3.6 plugs in.** The consensus value of a ring batch is `Engine::RingBatchValue`: the proposer
+**How B3.6 plugs in** (built, see B3.6 below). The consensus value of a ring batch is `Engine::RingBatchValue`: the proposer
 calls `buildRingBatch()`, every validator `checkRingBatch(value)` (a dry run on a copy), and all apply
 the decided value with `applyDecidedRingBatch(value)`, which writes the rings file and the row index.
 It must be decided after main block h − 1 and before block h's prime; `lastRingBatchHeight()` enforces
@@ -394,11 +395,80 @@ one per block. B3.6 adds it to `consensus::Value` as a third kind, moves `ring_r
 (calling `applyRingReveal` and `openRings` there), and adds pausing (`RingEntry::paused` and
 `RingsPaused` are already refused by the batch checks). No consensus code was changed in B3.5.
 
+## B3.6: ring batches in consensus, pausing
+
+Code: `consensus.hpp/.cpp` (the third kind of value), `engine_mining.cpp` (batch with reveals),
+`engine_rings.cpp` (reveal checks, the pause rule of the reveal window), `engine.cpp` (governance,
+`extension_root`), `registry.cpp` (`setPaused`, `extensionLeaves`).
+
+- **Third kind of decision (agreed, A3-1, R1).** `consensus::Value::Kind::RingBatch` carries
+  `Engine::RingBatchValue` (the batch and the signed works it names); `consensus::encode(Value)` hashes
+  both. Validity: the previous decision in the sequence was not a ring batch (`Node::previous_ring_batch_`,
+  kept in `Durable`) and `checkRingBatch` passes (a dry run). A decided batch is applied with
+  `applyDecidedRingBatch`, which appends it to the rings file. Ring messages (`RingCommit`, `RingPayee`,
+  `RingReveal`, `RingWork`) are consensus `Message`s and go to the engine like other submissions.
+- **Proposer.** A valid closing prime first. Otherwise, after a main decision, a ring batch if there is
+  one (checked by the proposer like everyone else); after a ring batch, main work first (proposed
+  rule 1). A ring batch leads only in round 0; from round 1 on the proposer offers a range first (a
+  batch only when there is no range), so a late, lost or refused batch costs at most one timeout per
+  main decision (proposed). So a prime always closes without a batch.
+- **One per main block (B3.5 rule kept, proposed).** `lastRingBatchHeight()` still allows one batch per
+  open height. Together with the sequence rule this is stricter than R1's "one between two main
+  decisions"; it keeps the rings file at one frame per open height and replay simple.
+- **Reveals in the batch (agreed).** `RingBatch` is: version, network, open height h, hash of main block
+  h − 1, ring blocks, reveals; at most parameter 35 bytes in all. Applied in that order: rows, then each
+  reveal with `applyRingReveal`, then `openRings` for h (proposed order: a ring opened by a batch is
+  mined from the next batch on). Expiry stays with the main block (`expireCommits`, then `openRings`
+  again, in the prime's ring step). An unmatched reveal or a commit referenced twice makes the batch
+  invalid; a matched reveal with a bad certificate is included and forfeits, as in B3.4. The proposer
+  puts reveals in first, in arrival order, then ring blocks (proposed); a batch may carry only reveals.
+  `closeBlock` (the single-node path of the tests) applies a reveals-only batch if reveals are queued and
+  the block has none. RING_COMMIT and RING_PAYEE stay main-block transactions.
+- **`extension_root` (agreed: covers every ring batch since the last prime).** Leaves
+  (`extensionLeaves`): the ring records by number (with tip and pause state), the open commits, then the
+  hash of the ring batch decided for the block, if any. Ring money counts from that block. A wrong root
+  makes the block differ from its replay; in consensus a prime value whose header lacks the decided batch
+  fails `checkPrimeValue` (header hash).
+- **Restart mid-sequence.** A decided batch is in the rings file before the block is sealed; `Engine::open`
+  applies a batch decided after the last block, and `Node::restore` skips that decision when it replays the
+  open block (it shares no state with ranges, so the order does not matter).
+- **Pausing (R2, parameter 36).** Governance kinds: `RingPause` (ring ≥ 1, pause or unpause; after the
+  notice, parameter 11) and `EmergencyPause` (one ring, or all rings with ring = 0; in force from the block
+  after the one that completes the quorum). Pause of all rings with notice is the parameter change
+  36: 0 → 1 (and back). A paused ring is refused in batches and skipped by the proposer; its queued works
+  wait. Under a pause of all rings no batch is built or accepted. The per-ring state is in the ring record
+  (snapshot, `extension_root`); the all-rings state in the parameter table (policy digest).
+- **"Shown faulty" (R2), as modelled (proposed).** An emergency pause is a quorum vote like the others, so
+  the quorum's signatures are the finding; the proposal must carry `evidence`, the nonzero hash of the
+  fault report (for example an input on which the verifier errs), and is recorded on chain with every vote.
+  The engine does not check the report. An emergency can only pause; unpausing always takes the notice.
+- **Reveal window under a pause of all rings (R5, agreed).** In every block under a pause of all rings,
+  each sealed commit whose window still includes that block gets one more block (`expires_after + 1`), so
+  a commit always has W unpaused blocks.
+- **Proposed rules 2 and 3.** Paused rings still count as open (nothing to build under A4: no share
+  depends on the other rings; κ counts openings). The backlog rule of B3.5 is unchanged.
+
+Tests (`ctest -R next_ring_mine_pause`; consensus: `ctest -R '^next_consensus_rings'`):
+
+| Test | What it checks |
+|---|---|
+| `next_ring_mine_pause` | pause of one ring with notice (mined during the notice, refused after it, the proposer leaves it out, its work waits, pause state in `extension_root`, a restart during the notice); unpause with notice; emergency pause of one ring (needs the fault report's hash, unknown ring not included, in force from the next block, recorded on chain, the other ring still mined, undone only with notice); pause of all rings with notice (no batch built or accepted, queued reveals wait); the reveal window: two commits get 3 extra blocks for 3 paused blocks, one reveals after its nominal window and opens, the other expires 3 blocks late; emergency pause of all rings; restarts; replay from the two files bit-identical |
+| `next_consensus_rings` | n = 3 with ring traffic (commits, reveals, works through consensus): both rings open and are mined; missing batches (ring traffic cut off: blocks close, no batch); late batches (every ring batch proposal for block T held back: T closes without one; delivered afterwards they change nothing); on a detached engine: oversized, wrongly credited, unmatched-reveal and second-in-a-block batches refused, a prime value whose header lacks the decided batch refused, a prime closes without the batch (its `extension_root` differs), a batch after its block's prime refused with state unchanged; identical engines and ring batches; never two ring batches in a row |
+| `next_consensus_rings_crash` | persistent n = 3: three crashes right after a ring batch decision (batch in the rings file, block not sealed) with restart; a longer outage of another node; identical rings and block files bit for bit |
+| `next_consensus_rings_partition` | `next_consensus_partition` with ring traffic; identical rings and block files |
+| `next_consensus_rings_byzantine` | n = 4, one Byzantine validator equivocates and turns its ring batch proposals into oversized or wrongly credited ones, and proposes the decided ring batch again right after it: all refused, the chain continues, no oversized batch decided, identical rings files |
+| `next_consensus_rings_fuzz` | `next_consensus_fuzz` with ring traffic, 4 seeds (n = 3–5, loss, delays, partitions, crash/restarts): no conflicts, identical rings and block files after healing |
+
+Run here (2026-11-28, Release, under the 1 GB memory cap): all non-consensus `next_` tests and the five
+new `next_consensus_rings*` tests pass. The existing `next_consensus_*` tests (chain, fuzz and the rest)
+were compiled but not run here (they need a validator pause on this host); their code paths changed
+(proposer choice, new value kind), so they should be run before merging.
+
 ## Deferred
 
 - **Monetary layer:** reserves, loans, banks.
 - **A3.2–A3.3:** networking, catch-up from the block file, a validator daemon.
-- **B3:** ring batches in consensus and pausing (B3.6), measurement at scale (B3.7).
+- **B3:** measurement at scale (B3.7).
 - An incremental state Merkle tree. `state_root` currently hashes one cached
   digest per asset.
 

@@ -80,7 +80,7 @@ so far. The rest is designed or planned.
 | 34 | mining message size, at most | 256 KB | ring-records |
 | 35 | ring batch size, at most | 256 KB | ring-records |
 | 65 | **generator size, at most (each coefficient of a recorded generator), a policy tool** | 4,096 bytes (proposed; covers real rings with regulator up to about 22,000, D near 10⁸) | R10, ring-records section 5 |
-| 36 | pause of one ring / all rings | off | R2 |
+| 36 | pause of one ring / all rings | off | R2, engine (B3.6: all rings is this parameter; one ring is a vote kind on the ring record) |
 | | **Cash (closed at launch)** | | |
 | 37 | total cash limit | 0 (at most 5% of supply when cash opens, proposed) | monetary-layer |
 | 38 | limit per kind (tranche) | 0 (at most 1% of supply when cash opens, proposed) | monetary-layer |

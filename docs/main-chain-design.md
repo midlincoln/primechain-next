@@ -451,6 +451,23 @@ open, for review:
    epoch length and notice, each for the block being built. Ring and cash parameters are only
    stored for now.
 
+### B3.6 implementation notes (2026-11-28)
+
+Ring batches in the consensus sequence (A3-1, R1, R2). Built as agreed: the third kind of
+value; valid only after a decision that was not a ring batch; reveals in the batch; pausing by
+vote with notice and by emergency; `extension_root` covers the batch decided for the block.
+Choices left open, for review (`next/README.md`, B3.6):
+
+1. **Proposer:** a valid closing prime first; otherwise a ring batch after a main decision and
+   main work after a ring batch; a ring batch leads only in round 0, so from round 1 a range goes
+   first. A batch that is late, lost or refused costs at most one timeout per main decision.
+2. **One ring batch per main block** (kept from B3.5), stricter than "one between two main
+   decisions".
+3. **Restart:** a decided ring batch is in the rings file before its block is sealed;
+   `Node::restore` skips it when replaying the open block.
+4. **Emergency pause:** a quorum vote with the hash of a fault report, in force from the next
+   block; it can only pause.
+
 ### Fixed by earlier work
 
 - **Consensus:** two-phase (prevote/precommit) rounds, lock on a quorum of

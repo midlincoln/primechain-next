@@ -432,6 +432,10 @@ if(PRIMECHAIN_BUILD_NEXT)
         add_test(NAME next_consensus_${mode} COMMAND primechain-next-consensus-tests ${mode})
         set_tests_properties(next_consensus_${mode} PROPERTIES TIMEOUT 1800)
     endforeach()
+    foreach(mode rings rings_crash rings_partition rings_byzantine rings_fuzz)  # B3.6
+        add_test(NAME next_consensus_${mode} COMMAND primechain-next-consensus-tests ${mode})
+        set_tests_properties(next_consensus_${mode} PROPERTIES TIMEOUT 1800)
+    endforeach()
 endif()
 
 option(PRIMECHAIN_BUILD_EXPERIMENTS "Build offline PrimeChain Next experiments" OFF)

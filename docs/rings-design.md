@@ -87,6 +87,10 @@ Reserve Banks do:
   immediately, and only if its verifier is shown to be faulty. It is recorded
   on chain. An **emergency pause of all rings** works the same way
   (2026-11-25), since rings share the consensus sequence and the ledger (R1).
+  Built in B3.6 (proposed model of "shown faulty"): a quorum vote naming the hash
+  of a fault report, in force from the block after the quorum; it can only pause,
+  and unpausing takes the notice. A pause with notice is a vote like other
+  parameter changes (one ring: its own vote kind; all rings: parameter 36).
 - Commitments finalized while gate 1 was open may still be revealed within
   the reveal window after it closes.
 - Gate states are part of the policy digest in every block header (D9).
