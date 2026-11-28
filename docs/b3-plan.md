@@ -13,7 +13,7 @@ No chain is live, so formats may still change freely.
 | **B3.2 Ring mathematics** | the certificate verifier moved into `next/`, plus the unit check, the size limit and a segment checker (R7, R9) | all 351 certificates and 2,424 entries pass; every corrupted variant is rejected; padded generators are rejected; segment ends match the measured runs |
 | **B3.3 Assets and awards** | asset (ring, q, i); ownership history; computed awards (R13) | the Alice and Ovanes cases, refused spending, restart and replay of `spend_test.py`, with the "pay everyone at once" ledger alongside, equal to the last unit |
 | **B3.4 Opening rings** | commit, reveal, deposit, gate 1, payee, registry | races (A commits first, B reveals first), expiry, copied reveals, loser's refund, certificates too large |
-| **B3.5 Mining rings** | signed work, batches, rings file with disk index, issuance (A3), `extension_root` | wrong rows, gaps, wrong ends, wrong miner credit and wrong roots are rejected; issuance matches the simulation; replay from the two files is bit-identical |
+| **B3.5 Mining rings** | signed work, batches, rings file with disk index, issuance (rule A4, with backlog), `extension_root` | wrong rows, gaps, wrong ends, wrong miner credit and wrong roots are rejected; issuance matches the simulation; replay from the two files is bit-identical |
 | **B3.6 Consensus** | ring batch as third kind of decision | a prime closes with a missing, late or invalid batch; crash, partition, Byzantine and fuzz tests with rings; pausing one ring or all |
 | **B3.7 Measurement** | chain to 20,000 with many rings | memory, bytes per row, time per batch, look-up time; main chain no slower than agreed |
 
