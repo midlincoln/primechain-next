@@ -710,6 +710,39 @@ chain, and the contract then pays by itself.
   of a named modulus, hash collision, ceremony secret, canary signature, recorded by
   validators), the payout locked at issue, and a bounty share. No contracts.
 
+### Insuring other chains (direction for later, 2026-11-28)
+
+**The founder's question:** can the same notes insure other coins against their
+cryptography breaking, and what is our value added? To be thought through further.
+
+**Value added, in one sentence:** insurance against cryptographic breaks that pays on a
+mathematical proof, runs on a chain that survives the break, and gives the market a price
+for when each strength falls.
+
+1. **Paid on a proof, not a vote or an adjuster.** Existing crypto insurance pays when
+   members or a company accept a claim. Here the claim is the break itself, checked by the
+   validators like a certificate: no oracle, no dispute.
+2. **The insurer survives the break it insures.** Cover against a break of secp256k1
+   (Bitcoin's and Ethereum's curve) or RSA, sold on those chains, fails in the very event it
+   covers. This chain uses ML-DSA and SHA3 (post-quantum), so the payouts still work.
+3. **Graded canaries give a price curve for crypto risk.** Canaries whose secret no one
+   knows: for elliptic curves a point chosen from a hash (no ceremony needed); for RSA a
+   modulus with unknown factors, made by a ceremony. Made at several strengths (curves of 80,
+   100, 112, 128 bits; RSA 512 to 2048 bits), the small ones fall first, so each claimed
+   canary is a dated early warning, and the prices of notes on each are the market's estimate
+   of when each strength breaks (like credit default swaps on cryptography), a public signal
+   for exchanges, custodians and standards bodies.
+
+**Limits:**
+- **Math breaks only.** Events on other chains (a given wallet robbed) cannot be checked
+  without an outside feed; the cover is "this cryptography was broken", not "your coins were
+  stolen".
+- **Payouts are in our units,** so a buyer's loss and payout do not match exactly.
+- **At full strength an attacker may prefer to steal** old coins rather than claim a
+  canary; the graded small canaries are what get claimed while attackers are still weak.
+- **Demand is unproven.** The likely buyers are custodians, exchanges and funds holding
+  coins under old signatures.
+
 **Deposit insurance** (banks paying premiums into a fund that pays depositors of a failed
 bank) is a separate topic, open; it would make low reserve ratios safer.
 
