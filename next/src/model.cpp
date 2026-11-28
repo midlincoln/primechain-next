@@ -198,7 +198,7 @@ bool readHeader(Reader& r, BlockHeader& h, const Limits& l) {
 
 bool readProposal(Reader& r, GovernanceProposal& p, const Limits& l) {
     std::uint8_t kind = 0;
-    if (!expectTag(r, kProposalTag, p.version) || !r.text(p.network_id, l.max_text) || !r.u8(kind) || kind < 1 || kind > 3)
+    if (!expectTag(r, kProposalTag, p.version) || !r.text(p.network_id, l.max_text) || !r.u8(kind) || kind < 1 || kind > 5)
         return false;
     p.kind = static_cast<GovernanceKind>(kind);
     if (p.kind == GovernanceKind::ParamChange) {
@@ -214,6 +214,12 @@ bool readProposal(Reader& r, GovernanceProposal& p, const Limits& l) {
     }
     if (p.kind == GovernanceKind::ValidatorAdd && !readValidator(r, p.validator, l)) return false;
     if (p.kind == GovernanceKind::ValidatorRemove && !r.hash(p.remove_key_hash)) return false;
+    if (p.kind == GovernanceKind::RingPause) {
+        std::uint8_t pause = 0;
+        if (!r.varint(p.ring) || !r.u8(pause) || pause > 1) return false;
+        p.pause = pause == 1;
+    }
+    if (p.kind == GovernanceKind::EmergencyPause && (!r.varint(p.ring) || !r.hash(p.evidence))) return false;
     return r.varint(p.effective_height) && r.varint(p.expiry_height) && r.varint(p.sequence) &&
            r.hash(p.validator_set_digest);
 }
@@ -366,6 +372,14 @@ Bytes encode(const GovernanceProposal& p) {
         w.raw(v);
     }
     if (p.kind == GovernanceKind::ValidatorRemove) w.hash(p.remove_key_hash);
+    if (p.kind == GovernanceKind::RingPause) {
+        w.varint(p.ring);
+        w.u8(p.pause ? 1 : 0);
+    }
+    if (p.kind == GovernanceKind::EmergencyPause) {
+        w.varint(p.ring);
+        w.hash(p.evidence);
+    }
     w.varint(p.effective_height);
     w.varint(p.expiry_height);
     w.varint(p.sequence);
@@ -432,8 +446,6 @@ Bytes encode(const Block& block) {
     for (const auto& c : block.ring_commits) w.bytes(encode(c));
     w.varint(block.ring_payees.size());
     for (const auto& p : block.ring_payees) w.bytes(encode(p));
-    w.varint(block.ring_reveals.size());
-    for (const auto& v : block.ring_reveals) w.bytes(encode(v));
     return w.data();
 }
 
@@ -511,8 +523,7 @@ bool decode(const Bytes& data, Block& out, const Limits& limits, std::string& er
             return true;
         };
         const std::size_t tx_bytes = 4 * limits.max_text + limits.max_key_bytes + limits.max_signature_bytes + 256;
-        return readList(b.ring_commits, tx_bytes) && readList(b.ring_payees, tx_bytes) &&
-               readList(b.ring_reveals, kMaxCertificateBytes + 256);
+        return readList(b.ring_commits, tx_bytes) && readList(b.ring_payees, tx_bytes);
     });
 }
 

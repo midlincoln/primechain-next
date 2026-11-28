@@ -87,8 +87,7 @@ public:
         std::vector<Transfer> transfers;
         std::vector<GovernanceTx> governance;
         std::vector<RingCommit> ring_commits;  // B3.4
-        std::vector<RingPayee> ring_payees;
-        std::vector<RingReveal> ring_reveals;  // carried by the main block until ring batches (B3.6)
+        std::vector<RingPayee> ring_payees;  // reveals ride in ring batches (B3.6)
         Hash256 header_hash{};  // hash of the sealed header, so a certificate binds the block (F7)
     };
     std::optional<RangeSubmission> bestPendingRange() const;  // highest end, ties by arrival
@@ -113,19 +112,23 @@ public:
     bool submitTransfer(const Transfer& transfer, std::string& error);
 
     // Closing prime (D5) and block construction: transfers in submission order (invalid ones
-    // are dropped), then rewards (D8), then the epoch distribution (D17).
+    // are dropped), then rewards (D8), then the epoch distribution (D17). Single-node convenience
+    // (tests, tools): if reveals are queued and no ring batch was applied for this block yet, a
+    // ring batch carrying only those reveals is applied first, as a proposer would (B3.6).
     bool validatePrime(const PrimeSubmission& prime, std::string& error) const;
     std::optional<Block> closeBlock(const PrimeSubmission& prime, std::string& error);
 
     // B3.4: opening rings (ring-records.md section 2, R2, R3, R5, R6). Submission checks form and
     // signature (and, for a commit, that gate 1 is open now); state is checked at inclusion.
     // A reveal is accepted for the queue only if it matches an unexpired sealed commit, so
-    // unmatched reveals cost nothing.
+    // unmatched reveals cost nothing. Reveals are carried by ring batches (B3.6).
     bool submitRingCommit(const RingCommit& commit, std::string& error);
     bool submitRingPayee(const RingPayee& payee, std::string& error);
     bool submitRingReveal(const RingReveal& reveal, std::string& error);
     const RingRegistry& rings() const { return registry_; }
-    const std::vector<RingOutcome>& lastRingOutcomes() const { return ring_outcomes_; }  // of the last block
+    // What happened to commits at the latest open height: its ring batch (reveals, openings) and its
+    // main block (expiry, openings). Not state.
+    const std::vector<RingOutcome>& lastRingOutcomes() const { return ring_outcomes_; }
     std::size_t pendingRingCount() const {
         return pending_ring_commits_.size() + pending_ring_payees_.size() + pending_ring_reveals_.size();
     }
@@ -137,13 +140,16 @@ public:
     // prime, the queued work that reaches furthest (ties by arrival) and accepts its segments from
     // there on. A ring batch is for the next main block h = height() + 1 (its rows count from h,
     // R13) and is applied before that block's prime; at most one per main block (proposed).
+    // B3.6: the batch is the third kind of consensus decision; it also carries the RING_REVEALs
+    // (applied after its ring blocks, then the R5 openings for h). Batches touching a paused ring,
+    // and every batch under a pause of all rings (parameter 36), are refused.
     struct RingBatchValue {
         RingBatch batch;
         std::vector<RingWork> works;  // the signed messages its groups name (journal data, D15)
     };
     bool submitRingWork(const RingWork& work, std::string& error);
     std::size_t pendingRingWorkCount() const { return pending_works_.size(); }
-    std::optional<RingBatchValue> buildRingBatch() const;                     // the proposer
+    std::optional<RingBatchValue> buildRingBatch() const;                     // the proposer (reveals first)
     bool checkRingBatch(const RingBatchValue& value, std::string& error) const;  // every validator, on a copy
     // The decided batch: the works must match the groups (hash, miner, segments), then every ring
     // block is checked and applied; with persistence it is appended to the rings file and its rows
@@ -152,6 +158,8 @@ public:
     // Ring batches applied by this engine (since the loaded snapshot for an opened one).
     const std::vector<RingBatch>& ringBatches() const { return ring_batches_; }
     std::uint64_t lastRingBatchHeight() const { return last_ring_batch_; }
+    // B3.6 (R2): every ring paused, for block `height` (parameter 36).
+    bool ringsPausedAt(std::uint64_t height) const { return parameterAt(Param::RingsPaused, height) != 0; }
     struct StoreBytes { std::uint64_t blocks{0}, rings{0}, rows{0}; };
     StoreBytes storeBytes() const;  // file sizes, for measurement (zero without persistence)
 
@@ -195,8 +203,10 @@ private:
     bool applyRingPayee(const RingPayee& p, std::string& error);
     const OpenCommit* matchReveal(const RingReveal& v, std::uint64_t height, std::string& error) const;
     bool applyRingReveal(const RingReveal& v, std::string& error);  // false: unmatched (not includable)
-    void expireCommits();
+    void expireCommits();  // B3.6: blocks under a pause of all rings do not count toward the window
     void openRings();
+    void ringStep(std::uint64_t height);  // starts the ring outcomes of block `height` (not state)
+    bool checkReveals(const std::vector<RingReveal>& reveals, std::string& error) const;
     bool chainPrime(const Integer& n) const;  // the PrimeOracle for certificates (exact, R3)
     // B3.5 (engine_mining.cpp).
     struct PendingWork {
@@ -217,6 +227,7 @@ private:
     bool checkGovernanceForm(const GovernanceTx& tx, std::string& error) const;
     bool applyGovernance(const GovernanceTx& tx, std::string& error);
     bool isScheduled(const Hash256& proposal_id) const;
+    bool checkPauseProposal(const GovernanceProposal& p, std::string& error) const;  // B3.6
     void activateScheduled(std::uint64_t height);  // changes effective at `height` take effect now
     Hash256 governanceDigest() const;
     Engine scratch() const;                          // detached copy for dry runs (no store)
@@ -272,7 +283,9 @@ private:
     std::vector<RingOutcome> ring_outcomes_;                  // of the block being sealed (not state)
     std::vector<RingCommit> pending_ring_commits_, included_ring_commits_;
     std::vector<RingPayee> pending_ring_payees_, included_ring_payees_;
-    std::vector<RingReveal> pending_ring_reveals_, included_ring_reveals_;
+    std::vector<RingReveal> pending_ring_reveals_;
+    Hash256 open_batch_hash_{};                               // B3.6: the ring batch of the open block (zero: none)
+    std::uint64_t outcomes_height_{0};                        // the block lastRingOutcomes() describes
     std::map<Integer, Hash256> asset_hashes_;
     std::map<AssetId, Hash256> ring_asset_hashes_;            // B3.5: ring primes moved by transfers
     std::map<Address, Bytes> keys_;                           // address -> public key (registered once)

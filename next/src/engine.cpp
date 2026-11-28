@@ -407,6 +407,7 @@ bool Engine::checkGovernanceForm(const GovernanceTx& tx, std::string& error) con
             if (c.new_value == c.old_value) { error = "governance: change without effect"; return false; }
         }
     }
+    if (!checkPauseProposal(p, error)) return false;
     if (tx.kind == GovernanceTxKind::Ready) {
         if (p.kind != GovernanceKind::ValidatorAdd || tx.signer_key != p.validator.consensus_key) {
             error = "governance: ready must be signed by the validator being added";
@@ -426,6 +427,18 @@ bool Engine::checkGovernanceForm(const GovernanceTx& tx, std::string& error) con
 bool Engine::submitGovernance(const GovernanceTx& tx, std::string& error) {
     if (!checkGovernanceForm(tx, error)) return false;
     pending_governance_.push_back(tx);
+    return true;
+}
+
+// B3.6 (R2): a pause of one ring names a ring number; an emergency pause names one ring or all
+// (0) and the hash of the fault report that shows the verifier faulty (nonzero; it is on chain in
+// every vote). An emergency can only pause; unpausing always takes the notice.
+bool Engine::checkPauseProposal(const GovernanceProposal& p, std::string& error) const {
+    if (p.kind == GovernanceKind::RingPause && p.ring == 0) { error = "governance: a ring pause names a ring"; return false; }
+    if (p.kind == GovernanceKind::EmergencyPause && p.evidence == Hash256{}) {
+        error = "governance: an emergency pause needs the hash of its fault report";
+        return false;
+    }
     return true;
 }
 
@@ -465,12 +478,20 @@ bool Engine::applyGovernance(const GovernanceTx& tx, std::string& error) {
         }
         if (const std::string why = checkParameters(next); !why.empty()) { error = "governance: " + why; return false; }
     }
+    if ((p.kind == GovernanceKind::RingPause || p.kind == GovernanceKind::EmergencyPause) && p.ring != 0 &&
+        !registry_.ring(p.ring)) {
+        error = "governance: unknown ring";
+        return false;
+    }
     auto& tally = tallies_[id];
     tally.proposal = p;
     if (!tally.voters.insert(voter).second) { error = "governance: duplicate vote"; return false; }
     if (tally.voters.size() >= quorum(validators_.size())) {
         const std::uint64_t notice = static_cast<std::uint64_t>(params_.value(Param::GovernanceNotice, h));
-        const std::uint64_t effective = std::max(p.effective_height, h + notice);
+        // R2: an emergency pause takes effect at once, from the next block (the batch of this block
+        // was decided before its prime); every other change after the notice.
+        const std::uint64_t effective =
+            p.kind == GovernanceKind::EmergencyPause ? h + 1 : std::max(p.effective_height, h + notice);
         scheduled_.emplace_back(effective, p);
         last_sequence_ = std::max(last_sequence_, p.sequence);
         tallies_.erase(id);
@@ -507,6 +528,12 @@ void Engine::activateScheduled(std::uint64_t height) {
                 validators_.push_back(v);
                 set_changed = true;
             }
+        } else if (p.kind == GovernanceKind::RingPause) {  // B3.6 (R2), after the notice
+            registry_.setPaused(p.ring, p.pause);
+        } else if (p.kind == GovernanceKind::EmergencyPause) {  // B3.6 (R2), immediate
+            if (p.ring != 0) registry_.setPaused(p.ring, true);
+            else if (params_.value(Param::RingsPaused, height) == 0)
+                params_.set(height, {{static_cast<std::uint32_t>(Param::RingsPaused), 1}});
         } else if (p.kind == GovernanceKind::ValidatorRemove && validators_.size() > 1) {
             const auto before = validators_.size();
             std::erase_if(validators_, [&](const ValidatorRecord& x) { return sha3(x.consensus_key) == p.remove_key_hash; });
@@ -574,6 +601,22 @@ void Engine::distributePools() {
 
 std::optional<Block> Engine::closeBlock(const PrimeSubmission& prime, std::string& error) {
     if (!validatePrime(prime, error)) return std::nullopt;
+    // B3.6: reveals ride in ring batches. Without consensus, the queued reveals go into a batch of
+    // their own if this block has none yet (the proposer would have put them into its batch).
+    if (!pending_ring_reveals_.empty() && last_ring_batch_ < height_ + 1 && !ringsPausedAt(height_ + 1)) {
+        RingBatchValue v;
+        v.batch.network_id = policy_.network_id;
+        v.batch.open_height = height_ + 1;
+        v.batch.previous_main = tip_;
+        const std::size_t limit = static_cast<std::size_t>(parameter(Param::RingBatchBytes));
+        std::string ignored;
+        for (const auto& r : pending_ring_reveals_) {
+            RingBatch trial = v.batch;
+            trial.reveals.push_back(r);
+            if (matchReveal(r, height_ + 1, ignored) && encode(trial).size() <= limit) v.batch.reveals = std::move(trial.reveals);
+        }
+        if (!v.batch.reveals.empty() && !applyDecidedRingBatch(v, error)) return std::nullopt;
+    }
     if (!prime.public_key.empty() && !registerKey(prime.provider, prime.public_key, error)) return std::nullopt;
     AcceptedPrime accepted;
     accepted.prime = prime.prime;
@@ -589,9 +632,12 @@ std::optional<Block> Engine::closeBlock(const PrimeSubmission& prime, std::strin
     pending_ring_commits_.clear();
     candidates.ring_payees = std::move(pending_ring_payees_);
     pending_ring_payees_.clear();
-    candidates.ring_reveals = std::move(pending_ring_reveals_);
-    pending_ring_reveals_.clear();
-    return closeAccepted(accepted, candidates, /*strict=*/false, error);
+    auto block = closeAccepted(accepted, candidates, /*strict=*/false, error);
+    std::erase_if(pending_ring_reveals_, [&](const RingReveal& v) {
+        std::string ignored;
+        return !matchReveal(v, height_ + 1, ignored);
+    });
+    return block;
 }
 
 std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, const PrimeContents& contents, bool strict,
@@ -644,20 +690,10 @@ std::optional<Block> Engine::closeAccepted(const AcceptedPrime& accepted, const 
     std::erase_if(tallies_, [&](const auto& entry) { return entry.second.proposal.expiry_height <= height_; });  // lapse
     // Ready messages of proposals that lapsed without passing are pruned with their tallies.
     std::erase_if(ready_, [&](const auto& e) { return readyDead(e.first, e.second.expiry, e.second.sequence, height_ + 1); });
-    // 1d. The ring step (R5): commits past their window expire, then the reveals in order (an
-    // unmatched reveal is not includable), then every ring whose earlier commits are settled opens.
-    ring_outcomes_.clear();
+    // 1d. The ring step (R5): commits past their window expire, then every ring whose earlier
+    // commits are settled opens. The reveals of this block were applied with its ring batch (B3.6).
+    ringStep(height_ + 1);
     expireCommits();
-    included_ring_reveals_.clear();
-    for (const auto& v : contents.ring_reveals) {
-        std::string reason;
-        if (applyRingReveal(v, reason)) {
-            included_ring_reveals_.push_back(v);
-        } else if (strict) {
-            error = "invalid ring reveal in block: " + reason;
-            return std::nullopt;
-        }
-    }
     openRings();
     // 2. D8 rewards: half to the prime finder, half per composite; remainders to the finder.
     const Integer& p = accepted.prime;
@@ -700,8 +736,6 @@ Block Engine::sealBlock(const Integer& prime, const std::optional<AcceptedPrime>
     included_ring_commits_.clear();
     block.ring_payees = std::move(included_ring_payees_);
     included_ring_payees_.clear();
-    block.ring_reveals = std::move(included_ring_reveals_);
-    included_ring_reveals_.clear();
     block.prime = accepted;
     ++height_;
     accepted_frontier_ = prime;
@@ -720,11 +754,11 @@ Block Engine::sealBlock(const Integer& prime, const std::optional<AcceptedPrime>
     for (const auto& p : block.ring_payees) tx_leaves.push_back(encode(p));
     h.transactions_root = merkleRoot(tx_leaves);
     h.state_root = stateRoot();
-    // ring-records section 3 (proposed form): the ring records with their tips, ordered by number,
-    // the open commits, then this block's reveals.
-    std::vector<Bytes> ext_leaves = registry_.leaves();
-    for (const auto& v : block.ring_reveals) ext_leaves.push_back(encode(v));
-    h.extension_root = merkleRoot(ext_leaves);
+    // ring-records section 3 (proposed form): the ring records with their tips and pause state,
+    // ordered by number, the open commits, then the ring batch decided for this block (its ring
+    // blocks and reveals), if any (B3.6: the root covers every ring batch since the last prime).
+    h.extension_root = merkleRoot(extensionLeaves(registry_, open_batch_hash_));
+    open_batch_hash_ = {};
     tip_ = blockHash(h);
     blocks_.push_back(block);
     activateScheduled(height_ + 1);  // A3-2/A3-3: changes effective at the next height start now
@@ -770,7 +804,6 @@ bool Engine::applyBlock(const Block& b, std::string& error) {
     contents.governance = b.governance;
     contents.ring_commits = b.ring_commits;
     contents.ring_payees = b.ring_payees;
-    contents.ring_reveals = b.ring_reveals;
     const auto rebuilt = closeAccepted(*b.prime, contents, /*strict=*/true, error);
     if (!rebuilt) {
         error += where;
@@ -1140,7 +1173,6 @@ std::optional<Engine::PrimeContents> Engine::buildPrimeContents(const PrimeSubmi
     candidates.governance = pending_governance_;
     candidates.ring_commits = pending_ring_commits_;
     candidates.ring_payees = pending_ring_payees_;
-    candidates.ring_reveals = pending_ring_reveals_;
     const auto block = sim.closeAccepted(acceptedFrom(prime), candidates, /*strict=*/false, error);
     if (!block) return std::nullopt;
     PrimeContents out;
@@ -1148,7 +1180,6 @@ std::optional<Engine::PrimeContents> Engine::buildPrimeContents(const PrimeSubmi
     out.governance = block->governance;
     out.ring_commits = block->ring_commits;
     out.ring_payees = block->ring_payees;
-    out.ring_reveals = block->ring_reveals;
     out.header_hash = blockHash(block->header);
     return out;
 }
@@ -1192,7 +1223,6 @@ std::optional<Block> Engine::applyDecidedPrime(const PrimeSubmission& prime, con
     std::set<Hash256> included_ring;
     for (const auto& c : block->ring_commits) included_ring.insert(sha3(encode(c)));
     for (const auto& p : block->ring_payees) included_ring.insert(sha3(encode(p)));
-    for (const auto& v : block->ring_reveals) included_ring.insert(sha3(encode(v)));
     std::erase_if(pending_ring_commits_, [&](const RingCommit& c) {
         return included_ring.count(sha3(encode(c))) || c.nonce <= nonce(c.discoverer);
     });
@@ -1200,9 +1230,9 @@ std::optional<Block> Engine::applyDecidedPrime(const PrimeSubmission& prime, con
         const RingEntry* r = registry_.ring(p.ring);
         return included_ring.count(sha3(encode(p))) || !r || p.nonce <= nonce(r->payees.back().second);
     });
-    std::erase_if(pending_ring_reveals_, [&](const RingReveal& v) {
+    std::erase_if(pending_ring_reveals_, [&](const RingReveal& v) {  // revealed in a batch, or expired
         std::string ignored;
-        return included_ring.count(sha3(encode(v))) || !matchReveal(v, height_ + 1, ignored);
+        return !matchReveal(v, height_ + 1, ignored);
     });
     pending_primes_.clear();
     return block;

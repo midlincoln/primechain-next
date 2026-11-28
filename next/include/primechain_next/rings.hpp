@@ -164,15 +164,17 @@ struct RingBlock {
     bool operator==(const RingBlock&) const = default;
 };
 
-// Ring batch (to become the third kind of decision, B3.6): open height h (the main block whose
-// rows these are), the hash of main block h - 1, the ring blocks by increasing ring number.
-// Reveals stay in the main block until B3.6.
+// Ring batch, the third kind of consensus decision (B3.6, A3-1): open height h (the main block
+// whose rows these are), the hash of main block h - 1, the ring blocks by increasing ring number,
+// then the RING_REVEALs (ring-records section 3). Applied in that order: rows first, then the
+// reveals, then the openings (R5) for h. At most parameter 35 bytes, reveals included.
 struct RingBatch {
     std::uint64_t version{kVersion1};
     std::string network_id;
     std::uint64_t open_height{0};
     Hash256 previous_main{};
     std::vector<RingBlock> blocks;
+    std::vector<RingReveal> reveals;
     bool operator==(const RingBatch&) const = default;
 };
 

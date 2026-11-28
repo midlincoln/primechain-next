@@ -454,6 +454,8 @@ Bytes encode(const RingBatch& x) {
     w.hash(x.previous_main);
     w.varint(x.blocks.size());
     for (const auto& b : x.blocks) writeRingBlock(w, b);
+    w.varint(x.reveals.size());  // B3.6: reveals ride in ring batches
+    for (const auto& v : x.reveals) w.bytes(encode(v));
     return w.data();
 }
 
@@ -486,6 +488,14 @@ bool decode(const Bytes& data, RingBatch& out, std::size_t max_text, std::string
             b.groups.push_back(std::move(g));
         }
         out.blocks.push_back(std::move(b));
+    }
+    if (!r.varint(count) || count > data.size()) return fail("bad reveal count");
+    for (std::uint64_t i = 0; i < count; ++i) {
+        Bytes raw;
+        RingReveal v;
+        std::string inner;
+        if (!r.bytes(raw, kMaxCertificateBytes + 256) || !decode(raw, v, Limits{}, inner)) return fail("bad ring reveal");
+        out.reveals.push_back(std::move(v));
     }
     if (!r.done()) return fail("trailing bytes after ring batch");
     return true;

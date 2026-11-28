@@ -37,11 +37,15 @@ struct Certificate {
 // A proposed value. `previous` is the certificate of the previous instance; embedding it makes
 // the proposer-skip counters part of agreed data, so every validator computes the same proposer
 // (like Tendermint's LastCommit). Absent only for the very first instance of a chain.
+// B3.6 (A3-1, R1): a ring batch is the third kind, in the same sequence. It is valid only if the
+// previous decision was not a ring batch (at most one between two main decisions); it is always
+// optional, so a prime closes without one.
 struct Value {
-    enum class Kind : std::uint8_t { Range = 1, Prime = 2 } kind{Kind::Range};
+    enum class Kind : std::uint8_t { Range = 1, Prime = 2, RingBatch = 3 } kind{Kind::Range};
     RangeSubmission range;            // Kind::Range
     PrimeSubmission prime;            // Kind::Prime
     Engine::PrimeContents contents;   // Kind::Prime: transfers and governance, in order
+    Engine::RingBatchValue ring;      // Kind::RingBatch: the batch and the signed works it names
     std::optional<Certificate> previous;
 };
 
@@ -79,7 +83,7 @@ struct Evidence {  // F15: two different signed votes by one signer at one (h, k
 };
 
 using Message = std::variant<Proposal, Vote, Decision, SyncRequest, RangeSubmission, PrimeSubmission, Transfer,
-                             GovernanceTx>;
+                             GovernanceTx, RingCommit, RingPayee, RingReveal, RingWork>;
 
 // Signature scheme used for consensus messages. Production: ML-DSA (the validator's consensus
 // key, D10). Tests may use the forgeable fast mock for large randomized runs without forgers.
@@ -124,6 +128,7 @@ struct Durable {
     Hash256 previous_digest{};
     std::vector<std::uint32_t> previous_candidates;
     std::set<std::uint64_t> set_change_heights;
+    bool previous_ring_batch{false};  // B3.6: the previous decision was a ring batch
     InstanceId id;
     std::uint64_t round{0};
     std::optional<Value> locked;
@@ -248,6 +253,7 @@ private:
     std::vector<Bytes> previous_keys_;
     Hash256 previous_digest_{};
     std::vector<std::uint32_t> previous_candidates_;
+    bool previous_ring_batch_{false};  // B3.6: no ring batch directly after a ring batch
 
     std::map<InstanceId, Decision> decisions_;
     std::map<InstanceId, Certificate> certificates_;

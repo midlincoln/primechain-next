@@ -21,6 +21,18 @@
 //  - A work is checked in full when submitted and queued until each of its segments is recorded.
 //  - The proposer fills a batch ring by ring in number order and stops at the first group that
 //    would exceed the ring batch size limit (parameter 35).
+//
+// B3.6 (consensus; rings-design R1, R2, R5; ring-records section 3). Agreed: the batch is the third
+// kind of decision; it carries the RING_REVEALs; batches touching a paused ring are refused, and
+// every batch under a pause of all rings (parameter 36). Proposed here:
+//  - In a batch, the ring blocks are applied first, then the reveals in order, then the R5
+//    openings for h (openRings); so a ring opened by a batch is mined from the next batch on.
+//    Expiry stays with the main block (expireCommits in the prime's ring step).
+//  - An unmatched reveal (no unexpired sealed commit, or a commit referenced twice) makes the
+//    batch invalid; a matched reveal whose certificate fails is included and forfeits (B3.4).
+//  - The proposer puts the reveals in first, in arrival order (they have a deadline), then the
+//    ring blocks, all within parameter 35; a batch may carry reveals only, or ring blocks only.
+//  - The hash of the decided batch is a leaf of block h's extension_root (extensionLeaves).
 #include "primechain_next/engine.hpp"
 
 #include <algorithm>
@@ -101,13 +113,23 @@ bool Engine::submitRingWork(const RingWork& w, std::string& error) {
 
 std::optional<Engine::RingBatchValue> Engine::buildRingBatch() const {
     const std::uint64_t h = height_ + 1;
-    if (last_ring_batch_ >= h || parameterAt(Param::RingsPaused, h) != 0) return std::nullopt;
+    if (last_ring_batch_ >= h || ringsPausedAt(h)) return std::nullopt;
     const std::size_t limit = static_cast<std::size_t>(parameterAt(Param::RingBatchBytes, h));
     const SegmentLimits limits = segmentLimitsAt(h);
     RingBatchValue v;
     v.batch.network_id = policy_.network_id;
     v.batch.open_height = h;
     v.batch.previous_main = tip_;
+    // B3.6: the reveals first (each commit has a deadline), in arrival order, within the limit.
+    std::set<std::pair<std::uint64_t, std::uint64_t>> revealed;
+    for (const auto& r : pending_ring_reveals_) {
+        std::string why;
+        if (!matchReveal(r, h, why) || !revealed.insert({r.commit_height, r.commit_index}).second) continue;
+        RingBatch trial = v.batch;
+        trial.reveals.push_back(r);
+        if (encode(trial).size() > limit) continue;  // a smaller one may still fit
+        v.batch.reveals.push_back(r);
+    }
     std::vector<Hash256> used;
     std::set<Hash256> excluded;  // works no longer valid (for example after a vote on parameter 65)
     bool full = false;
@@ -158,7 +180,7 @@ std::optional<Engine::RingBatchValue> Engine::buildRingBatch() const {
         }
         if (!block.groups.empty()) v.batch.blocks.push_back(std::move(block));
     }
-    if (v.batch.blocks.empty()) return std::nullopt;
+    if (v.batch.blocks.empty() && v.batch.reveals.empty()) return std::nullopt;
     for (const auto& hash : used)
         for (const auto& p : pending_works_)
             if (p.hash == hash) { v.works.push_back(p.work); break; }
@@ -219,8 +241,8 @@ bool Engine::applyRingBatch(const RingBatch& batch, bool append, std::string& er
     if (batch.open_height != h) { error = "ring batch is not for the next main block"; return false; }
     if (batch.previous_main != tip_) { error = "ring batch does not follow main block h - 1"; return false; }
     if (last_ring_batch_ >= h) { error = "one ring batch per main block"; return false; }
-    if (parameterAt(Param::RingsPaused, h) != 0) { error = "all rings are paused"; return false; }
-    if (batch.blocks.empty()) { error = "empty ring batch"; return false; }
+    if (ringsPausedAt(h)) { error = "all rings are paused"; return false; }
+    if (batch.blocks.empty() && batch.reveals.empty()) { error = "empty ring batch"; return false; }
     if (encode(batch).size() > parameterAt(Param::RingBatchBytes, h)) { error = "ring batch exceeds the size limit"; return false; }
     const SegmentLimits limits = segmentLimitsAt(h);
     const std::uint64_t per_signature = static_cast<std::uint64_t>(parameterAt(Param::SegmentsPerSignature, h));
@@ -278,6 +300,7 @@ bool Engine::applyRingBatch(const RingBatch& batch, bool append, std::string& er
         }
         plan.push_back(std::move(p));
     }
+    if (!checkReveals(batch.reveals, error)) return false;
     // Everything is checked: record the rows (R13: the row is the payout record) and advance the
     // ring records. The ledger refusing a checked row is a bug.
     for (const auto& p : plan) {
@@ -285,7 +308,17 @@ bool Engine::applyRingBatch(const RingBatch& batch, bool append, std::string& er
             if (!ledger_.recordRow(row, error)) throw std::logic_error("ledger refused a checked row: " + error);
         registry_.advance(p.ring, p.frontier, p.tip);
     }
+    // B3.6: then the reveals (refunds, forfeits) and the R5 openings for h.
+    ringStep(h);
+    for (const auto& r : batch.reveals)
+        if (!applyRingReveal(r, error)) throw std::logic_error("a checked reveal does not apply: " + error);
+    openRings();
+    std::erase_if(pending_ring_reveals_, [&](const RingReveal& r) {
+        std::string ignored;
+        return !matchReveal(r, h, ignored);
+    });
     last_ring_batch_ = h;
+    open_batch_hash_ = ringBatchHash(batch);
     RingBatch kept = batch;  // as written to the rings file: segments without ring ID and start
     for (auto& b : kept.blocks)
         for (auto& g : b.groups)

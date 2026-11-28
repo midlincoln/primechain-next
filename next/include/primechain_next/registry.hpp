@@ -22,7 +22,8 @@ struct OpenCommit {
     Hash256 commitment{};
     Integer deposit_asset;
     Amount deposit;
-    std::uint64_t expires_after{0};  // the last block in which it may be revealed (height + window in force)
+    std::uint64_t expires_after{0};  // the last block in which it may be revealed (height + window in force,
+                                     // plus one for each later block under a pause of all rings, B3.6)
     bool revealed{false};
     // After a valid reveal (the deposit is already refunded):
     std::uint64_t revealed_in{0};
@@ -52,7 +53,7 @@ struct RingEntry {
     std::uint64_t commit_index{0};
     Integer frontier;          // last main-chain prime with a row; 0 = none yet (advanced by ring blocks, B3.5)
     Hash256 tip{};             // hash of the latest ring block; the ring genesis hash before the first
-    bool paused{false};        // R2 pause state; set by B3.6, not used yet
+    bool paused{false};        // R2 pause of this ring (B3.6): batches touching it are refused
     bool operator==(const RingEntry&) const = default;
 };
 
@@ -90,6 +91,8 @@ public:
     bool setPayee(std::uint64_t ring, std::uint64_t height, const Address& payee, std::string& error);
     // B3.5: a ring block was accepted; the ring is complete up to `frontier`, its tip is `tip`.
     void advance(std::uint64_t ring, const Integer& frontier, const Hash256& tip);
+    // B3.6 (R2): pause or unpause one ring; false if there is no such ring.
+    bool setPaused(std::uint64_t ring, bool paused);
 
     Bytes encodeEntry(const RingEntry& r) const;
     Bytes encodeCommit(const OpenCommit& c) const;
@@ -104,5 +107,9 @@ private:
     std::map<std::uint64_t, RingEntry> rings_;
     std::map<Hash256, std::uint64_t> by_id_;
 };
+
+// B3.6: the leaves of a main header's extension_root: the ring records by number, the open
+// commits in order, then (if the block has one, nonzero hash) the ring batch decided for it.
+std::vector<Bytes> extensionLeaves(const RingRegistry& registry, const Hash256& ring_batch_hash);
 
 }  // namespace primechain::next

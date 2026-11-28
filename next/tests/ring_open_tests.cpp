@@ -156,10 +156,19 @@ Integer fundedAsset(const Engine& e, const Miner& m, const Amount& need) {
     throw std::runtime_error("no funded asset");
 }
 
-Hash256 merkleRootOf(const RingRegistry& registry, const Block& block) {
-    std::vector<Bytes> leaves = registry.leaves();
-    for (const auto& v : block.ring_reveals) leaves.push_back(encode(v));
-    return merkleRoot(leaves);
+// B3.6: reveals ride in ring batches; the batch decided for a block is a leaf of its extension_root.
+const RingBatch* batchAt(const std::vector<RingBatch>& batches, std::uint64_t h) {
+    for (const auto& b : batches)
+        if (b.open_height == h) return &b;
+    return nullptr;
+}
+std::size_t revealsAt(const Engine& e, std::uint64_t h) {
+    const RingBatch* b = batchAt(e.ringBatches(), h);
+    return b ? b->reveals.size() : 0;
+}
+Hash256 merkleRootOf(const RingRegistry& registry, const std::vector<RingBatch>& batches, const Block& block) {
+    const RingBatch* b = batchAt(batches, block.header.height);
+    return merkleRoot(extensionLeaves(registry, b ? ringBatchHash(*b) : Hash256{}));
 }
 
 const OpenCommit* sealedAt(const Engine& e, std::uint64_t h, std::uint64_t i) { return e.rings().commit(h, i); }
@@ -204,7 +213,7 @@ void raceTests() {
         require(e.balance(w.B.address, w.b_asset) == *b0.sub(*dep.add(fee)), "the deposit and fee leave B");
         reveal(e, makeReveal(101, 0, kSecretB));
         Block b102 = w.next();
-        require(b102.ring_reveals.size() == 1, "B reveals at 102");
+        require(b102.header.height == 102 && revealsAt(e, 102) == 1, "B reveals at 102 (in the ring batch)");
         require(e.rings().rings().empty(), "B waits: A's earlier commit is still sealed");
         require(e.balance(w.B.address, w.b_asset) == *b0.sub(fee), "B's valid reveal is refunded at once (the fee is not)");
         require(sealedAt(e, 101, 0) && sealedAt(e, 101, 0)->revealed, "B's commit is revealed and waiting");
@@ -230,7 +239,7 @@ void raceTests() {
         const RingRecord* lr = e.assets().ring(1);
         require(lr && lr->terms == r.terms && lr->opened == 105 && lr->payees == r.payees, "ring wired into the asset ledger");
         std::string error;
-        require(Engine::replay(e.policy(), e.blocks(), error).has_value(), "race replays: " + error);
+        require(Engine::replay(e.policy(), Genesis{}, e.blocks(), e.ringBatches(), error).has_value(), "race replays: " + error);
     }
     // 2. B reveals first with no earlier commit: the ring opens at once.
     {
@@ -380,12 +389,14 @@ void ruleTests() {
         const Amount dep = Amount::fromRaw(e.parameter(Param::RingDeposit));
         require(e.balance(w.C.address, w.c_asset) == *c0.add(dep)->sub(Amount::fromRaw(e.parameter(Param::MinFee))), "both of C's deposits refunded, the copier's as a loser (fees kept)");
         require(e.rings().commits().empty(), "all settled");
-        // Strict replay rejects a block that carries an unmatched reveal.
-        std::vector<Block> blocks = e.blocks();
-        blocks[101].ring_reveals.push_back(makeReveal(100, 0, {salt(0xEE), kMinus7}));  // block 102
-        require(!Engine::replay(e.policy(), blocks, error).has_value() && error.find("reveal") != std::string::npos,
-                "an unmatched reveal invalidates a block: " + error);
-        require(Engine::replay(e.policy(), e.blocks(), error).has_value(), "the real chain replays: " + error);
+        // Strict replay rejects a ring batch that carries an unmatched reveal.
+        std::vector<RingBatch> batches = e.ringBatches();
+        for (auto& b : batches)
+            if (b.open_height == 102) b.reveals.push_back(makeReveal(100, 0, {salt(0xEE), kMinus7}));
+        require(!Engine::replay(e.policy(), Genesis{}, e.blocks(), batches, error).has_value() &&
+                    error.find("reveal") != std::string::npos,
+                "an unmatched reveal invalidates a ring batch: " + error);
+        require(Engine::replay(e.policy(), Genesis{}, e.blocks(), e.ringBatches(), error).has_value(), "the real chain replays: " + error);
     }
     // 2. Invalid certificates, duplicate ring, too large: the reveal matches, so it is included,
     //    the deposit goes to the fee pool and the commit is settled at once (it no longer delays).
@@ -424,7 +435,7 @@ void ruleTests() {
         const Secret good{salt(6), kFiftySeven};
         commit(e, makeCommit(e, w.C, good, w.c_asset));
         Block rb = w.next();  // 103
-        require(rb.ring_reveals.size() == bad.size(), "matched invalid reveals are included");
+        require(rb.header.height == 103 && revealsAt(e, 103) == bad.size(), "matched invalid reveals are included");
         for (std::size_t i = 0; i < bad.size(); ++i) {
             bool seen = false;
             for (const auto& o : e.lastRingOutcomes())
@@ -441,7 +452,7 @@ void ruleTests() {
         w.next();  // 104
         require(e.rings().ring(2) && e.rings().ring(2)->d == 57 && e.rings().ring(2)->opened == 104 &&
                 e.rings().ring(2)->unit == QuadElement{Integer(131), Integer(40)}, "the valid ring opens with its unit");
-        require(Engine::replay(e.policy(), e.blocks(), error).has_value(), "replays: " + error);
+        require(Engine::replay(e.policy(), Genesis{}, e.blocks(), e.ringBatches(), error).has_value(), "replays: " + error);
     }
     // 3. Eligibility |D| <= F^2 against a small frontier, with deposit 0 (allowed, nothing moves).
     {
@@ -464,7 +475,7 @@ void ruleTests() {
             require(b.ring_commits.size() == 1, "fee: A's commit at deposit 0 is included");
             require(*f.assets().pool(AssetId::main(fa)).sub(before) == Amount(1), "fee: 1 micro-unit to the pool");
             require(f.assets().owned(AssetId::main(fa), A.address) < had, "fee: taken from A");
-            require(Engine::replay(f.policy(), f.blocks(), error).has_value(), "fee: replays: " + error);
+            require(Engine::replay(f.policy(), Genesis{}, f.blocks(), f.ringBatches(), error).has_value(), "fee: replays: " + error);
         }
         policy.parameters[pid(Param::MinFee)] = 0;  // fee 0 as well: then a commit moves nothing
         Engine e(policy);
@@ -502,7 +513,7 @@ void ruleTests() {
             ineligible |= o.commit_index == 1 && o.kind == RingOutcome::Kind::Forfeited && o.reason.find("eligible") != std::string::npos;
         require(ineligible, "eligibility failure recorded");
         require(low.rings().commits().empty(), "all settled");
-        require(Engine::replay(low.policy(), low.blocks(), error).has_value(), "replays: " + error);
+        require(Engine::replay(low.policy(), Genesis{}, low.blocks(), low.ringBatches(), error).has_value(), "replays: " + error);
     }
     // 4. Insufficient funds for the deposit: accepted for the queue, not included.
     {
@@ -518,7 +529,7 @@ void ruleTests() {
         // Strict replay rejects such a block.
         std::vector<Block> blocks = e.blocks();
         blocks.back().ring_commits.push_back(c);
-        require(!Engine::replay(e.policy(), blocks, error).has_value() && error.find("ring commit") != std::string::npos,
+        require(!Engine::replay(e.policy(), Genesis{}, blocks, e.ringBatches(), error).has_value() && error.find("ring commit") != std::string::npos,
                 "a commit without funds invalidates a block: " + error);
     }
     // 5. Gate 1 closed: rejected on arrival, nothing taken. kappa: one ring per epoch.
@@ -584,14 +595,14 @@ void payeeTests() {
     {
         std::vector<Block> blocks = e.blocks();
         blocks.back().ring_payees.push_back(makePayee(e, w.B, 1, w.B));
-        require(!Engine::replay(e.policy(), blocks, error).has_value(), "payee change by a non-payee invalidates a block");
+        require(!Engine::replay(e.policy(), Genesis{}, blocks, e.ringBatches(), error).has_value(), "payee change by a non-payee invalidates a block");
     }
     require(e.submitRingPayee(makePayee(e, w.C, 1, w.A), error), "C names A");
     w.next();  // 103
     require(e.rings().ring(1)->payees.back() == std::make_pair(std::uint64_t{103}, w.A.address), "A from 103");
     // A replayed (same nonce) change is refused.
     require(!e.submitRingPayee(makePayee(e, w.C, 1, w.A, 0), error), "stale nonce refused");
-    require(Engine::replay(e.policy(), e.blocks(), error).has_value(), "payee chain replays: " + error);
+    require(Engine::replay(e.policy(), Genesis{}, e.blocks(), e.ringBatches(), error).has_value(), "payee chain replays: " + error);
     std::cout << "ring payee: " << checks << " checks passed\n";
 }
 
@@ -700,11 +711,13 @@ void persistenceTests() {
         require(opened.has_value(), "reopen 2: " + error);
         require(opened->tip() == tip && opened->stateRoot() == state && opened->rings() == registry && opened->assets() == ledger,
                 "second restart: identical state");
-        require(opened->blocks().back().header.extension_root == merkleRootOf(opened->rings(), opened->blocks().back()),
+        require(opened->blocks().back().header.extension_root ==
+                    merkleRootOf(opened->rings(), opened->ringBatches(), opened->blocks().back()),
                 "extension root covers the registry");
     }
-    // Replay from the block file alone.
+    // Replay from the two files (blocks and ring batches, which carry the reveals).
     {
+        std::vector<RingBatch> batches;
         Store store;
         require(store.open(dir, error), "store: " + error);
         for (std::uint64_t i = 0; i < store.blockCount(); ++i) {
@@ -714,7 +727,15 @@ void persistenceTests() {
             require(encode(b) == raw, "block codec round trip");
             all.push_back(b);
         }
-        auto replayed = Engine::replay(policy, all, error);
+        for (std::uint64_t i = 0; i < store.rings().count(); ++i) {
+            Bytes raw;
+            RingBatch b;
+            require(store.rings().read(i, raw, error) && decode(raw, b, policy.limits.max_text, error) && encode(b) == raw,
+                    "ring batch codec round trip");
+            batches.push_back(b);
+        }
+        require(batches.size() == 2, "two ring batches (the reveals at 33 and 34)");
+        auto replayed = Engine::replay(policy, Genesis{}, all, batches, error);
         require(replayed.has_value(), "replay: " + error);
         require(replayed->tip() == tip && replayed->stateRoot() == state && replayed->rings() == registry &&
                 replayed->assets() == ledger, "replay: identical state");

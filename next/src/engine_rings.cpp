@@ -9,8 +9,10 @@
 //    main-chain prime (0 allowed). The commit also pays the minimum fee (MinFee) to the fee pool
 //    in the same asset (agreed 2026-11-28), so commits are never free.
 //  - A commit may be revealed in blocks height+1 .. height+W, W the reveal window in force at the
-//    commit's block (never retroactive); it expires at the start of block height+W+1. Not built:
-//    "blocks under a pause of all rings do not count toward the window" (pausing is B3.6).
+//    commit's block (never retroactive); it expires at the start of block height+W+1. B3.6: blocks
+//    under a pause of all rings do not count toward the window (R5): each such block inside the
+//    window moves the commit's last block one further. The reveal itself rides in the ring batch
+//    of its block (applied before the block's prime).
 //  - The deposit of a valid reveal is refunded in the block of the reveal, also for a loser.
 //  - A reveal that matches its commitment but fails (type, size, encoding, eligibility,
 //    certificate, ring already open before the commit's block) forfeits the deposit to the fee
@@ -24,6 +26,7 @@
 
 #include "primechain/crypto/signature.hpp"
 
+#include <set>
 #include <stdexcept>
 
 namespace primechain::next {
@@ -156,6 +159,20 @@ bool Engine::submitRingReveal(const RingReveal& v, std::string& error) {
     return true;
 }
 
+// B3.6: the reveals of one ring batch, before anything is applied: each matches an unexpired
+// sealed commit, and no commit is referenced twice.
+bool Engine::checkReveals(const std::vector<RingReveal>& reveals, std::string& error) const {
+    std::set<std::pair<std::uint64_t, std::uint64_t>> seen;
+    for (const auto& v : reveals) {
+        if (!matchReveal(v, height_ + 1, error)) { error = "invalid ring reveal in batch: " + error; return false; }
+        if (!seen.insert({v.commit_height, v.commit_index}).second) {
+            error = "invalid ring reveal in batch: commit revealed twice";
+            return false;
+        }
+    }
+    return true;
+}
+
 bool Engine::applyRingReveal(const RingReveal& v, std::string& error) {
     const std::uint64_t h = height_ + 1;
     const OpenCommit* matched = matchReveal(v, h, error);
@@ -209,8 +226,22 @@ bool Engine::applyRingReveal(const RingReveal& v, std::string& error) {
 
 // ---------------------------------------------------------------- expiry and opening (R5)
 
+void Engine::ringStep(std::uint64_t h) {
+    if (outcomes_height_ == h) return;
+    ring_outcomes_.clear();
+    outcomes_height_ = h;
+}
+
 void Engine::expireCommits() {
     const std::uint64_t h = height_ + 1;
+    // R5, B3.6: a block under a pause of all rings (no ring batch, so no reveal, is possible in
+    // it) does not count toward the window of a commit whose window still includes it.
+    if (ringsPausedAt(h)) {
+        std::vector<RingRegistry::Key> waiting;
+        for (const auto& [key, c] : registry_.commits())
+            if (!c.revealed && c.height < h && c.expires_after >= h) waiting.push_back(key);
+        for (const auto& [ch, ci] : waiting) ++registry_.commit(ch, ci)->expires_after;
+    }
     std::vector<RingRegistry::Key> expired;
     for (const auto& [key, c] : registry_.commits())
         if (!c.revealed && c.expires_after < h) expired.push_back(key);

@@ -77,20 +77,22 @@ Bytes encode(const Value& v) {
     w.u8(static_cast<std::uint8_t>(v.kind));
     if (v.kind == Value::Kind::Range) {
         w.bytes(primechain::next::encode(v.range));
+    } else if (v.kind == Value::Kind::RingBatch) {  // B3.6: the batch, then the signed works it names
+        w.bytes(primechain::next::encode(v.ring.batch));
+        w.varint(v.ring.works.size());
+        for (const auto& work : v.ring.works) w.bytes(primechain::next::encode(work));
     } else {
         w.bytes(primechain::next::encode(v.prime));
         w.varint(v.contents.transfers.size());
         for (const auto& t : v.contents.transfers) w.bytes(primechain::next::encode(t));
         w.varint(v.contents.governance.size());
         for (const auto& g : v.contents.governance) w.bytes(primechain::next::encode(g));
-        // B3.4: ring commits and payee changes are main-block transactions; reveals ride in the
-        // main block until ring batches exist (B3.6).
+        // B3.4: ring commits and payee changes are main-block transactions; reveals ride in ring
+        // batches (B3.6).
         w.varint(v.contents.ring_commits.size());
         for (const auto& c : v.contents.ring_commits) w.bytes(primechain::next::encode(c));
         w.varint(v.contents.ring_payees.size());
         for (const auto& p : v.contents.ring_payees) w.bytes(primechain::next::encode(p));
-        w.varint(v.contents.ring_reveals.size());
-        for (const auto& r : v.contents.ring_reveals) w.bytes(primechain::next::encode(r));
         w.hash(v.contents.header_hash);  // the certificate binds the sealed block header (F7)
     }
     w.u8(v.previous ? 1 : 0);
@@ -149,6 +151,7 @@ Durable Node::durable() const {
     d.previous_digest = previous_digest_;
     d.previous_candidates = previous_candidates_;
     d.set_change_heights = set_change_heights_;
+    d.previous_ring_batch = previous_ring_batch_;
     d.id = id_;
     d.round = round_;
     d.locked = locked_;
@@ -180,8 +183,15 @@ Node Node::restore(Bytes consensus_public, Bytes consensus_secret, Engine engine
     Node n(std::move(consensus_public), std::move(consensus_secret), std::move(engine), std::move(crypto), timing,
            retention);
     // The store holds every sealed block; decisions inside the open block are replayed from the log.
+    // B3.6: a ring batch of the open block is already in the rings file (it is written when
+    // decided), so the reopened engine has applied it; it is skipped here. It touches no state that
+    // ranges touch, so applying it before the open block's ranges gives the same state.
     for (const auto& [id, decision] : d.decisions) {
         if (id.h <= n.engine_.height()) continue;
+        if (decision.value.kind == Value::Kind::RingBatch && n.engine_.lastRingBatchHeight() == id.h &&
+            !n.engine_.ringBatches().empty() &&
+            primechain::next::encode(n.engine_.ringBatches().back()) == primechain::next::encode(decision.value.ring.batch))
+            continue;
         std::string error;
         if (id.h != n.engine_.height() + 1 || !n.applyValue(decision.value, error))
             throw std::runtime_error("restore: cannot replay decision " + describe(id, decision.certificate.round) +
@@ -196,6 +206,7 @@ Node Node::restore(Bytes consensus_public, Bytes consensus_secret, Engine engine
     n.previous_digest_ = d.previous_digest;
     n.previous_candidates_ = d.previous_candidates;
     n.set_change_heights_ = d.set_change_heights;
+    n.previous_ring_batch_ = d.previous_ring_batch;
     n.id_ = d.id;
     if (n.id_.h != n.engine_.height() + 1) throw std::runtime_error("restore: instance does not match the store");
     n.loadInstanceContext();
@@ -340,11 +351,29 @@ std::optional<Value> Node::getValue() {
             return v;
         }
     }
+    // B3.6: otherwise alternate. After a main decision a ring batch, if there is one; after a ring
+    // batch, main work first (proposed). A ring batch leads only in round 0: once a round has failed
+    // (a batch that is late, lost or refused elsewhere), main work goes first, so a batch costs at
+    // most one timeout per main decision and never stalls the block. The proposer checks its own
+    // batch like everyone else, so a batch it cannot get accepted never displaces a range.
+    auto ringBatch = [&]() -> std::optional<Value> {
+        if (previous_ring_batch_) return std::nullopt;
+        auto batch = engine_.buildRingBatch();
+        if (!batch) return std::nullopt;
+        Value r = v;
+        r.kind = Value::Kind::RingBatch;
+        r.ring = std::move(*batch);
+        if (!valid(r)) return std::nullopt;
+        return r;
+    };
+    if (round_ == 0)
+        if (auto r = ringBatch()) return r;
     if (auto range = engine_.bestPendingRange()) {
         v.kind = Value::Kind::Range;
         v.range = *range;
         return v;
     }
+    if (round_ > 0) return ringBatch();
     return std::nullopt;
 }
 
@@ -415,9 +444,16 @@ bool Node::valid(const Value& value) {
     } else {
         ok = !value.previous;
     }
-    if (ok)
-        ok = value.kind == Value::Kind::Range ? engine_.validateRange(value.range, error)
-                                              : engine_.checkPrimeValue(value.prime, value.contents, error);
+    if (ok) {
+        switch (value.kind) {
+        case Value::Kind::Range: ok = engine_.validateRange(value.range, error); break;
+        case Value::Kind::Prime: ok = engine_.checkPrimeValue(value.prime, value.contents, error); break;
+        case Value::Kind::RingBatch:  // R1: at most one ring batch between two main decisions
+            ok = !previous_ring_batch_ && engine_.checkRingBatch(value.ring, error);
+            break;
+        default: ok = false;
+        }
+    }
     valid_cache_[h] = ok;
     return ok;
 }
@@ -658,6 +694,14 @@ void Node::receive(const Message& message, std::uint32_t from, std::uint64_t now
                 submit(primechain::next::encode(m), [&] { return engine_.submitTransfer(m, error); });
             } else if constexpr (std::is_same_v<T, GovernanceTx>) {
                 submit(primechain::next::encode(m), [&] { return engine_.submitGovernance(m, error); });
+            } else if constexpr (std::is_same_v<T, RingCommit>) {  // B3.4/B3.6 ring traffic
+                submit(primechain::next::encode(m), [&] { return engine_.submitRingCommit(m, error); });
+            } else if constexpr (std::is_same_v<T, RingPayee>) {
+                submit(primechain::next::encode(m), [&] { return engine_.submitRingPayee(m, error); });
+            } else if constexpr (std::is_same_v<T, RingReveal>) {
+                if (submit(primechain::next::encode(m), [&] { return engine_.submitRingReveal(m, error); })) propose(now, out);
+            } else if constexpr (std::is_same_v<T, RingWork>) {
+                if (submit(primechain::next::encode(m), [&] { return engine_.submitRingWork(m, error); })) propose(now, out);
             }
         },
         message);
@@ -699,6 +743,7 @@ bool verifyCertificate(const Certificate& c, const std::vector<Bytes>& keys, con
 
 bool Node::applyValue(const Value& value, std::string& error) {
     if (value.kind == Value::Kind::Range) return engine_.applyDecidedRange(value.range, error);
+    if (value.kind == Value::Kind::RingBatch) return engine_.applyDecidedRingBatch(value.ring, error);
     submitted_.clear();  // every queued submission was anchored to the previous tip
     return engine_.applyDecidedPrime(value.prime, value.contents, error).has_value();
 }
@@ -730,6 +775,7 @@ bool Node::decide(const Value& value, const Certificate& certificate, std::uint6
     previous_keys_ = keys_;
     previous_digest_ = set_digest_;
     previous_candidates_ = candidates_;
+    previous_ring_batch_ = value.kind == Value::Kind::RingBatch;
     if (value.kind == Value::Kind::Prime) {
         if (engine_.validatorSetDigest() != set_digest_) set_change_heights_.insert(id_.h);  // last block of the old set
         id_ = {id_.h + 1, 0};

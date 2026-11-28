@@ -110,6 +110,13 @@ void RingRegistry::advance(std::uint64_t number, const Integer& frontier, const 
     it->second.tip = tip;
 }
 
+bool RingRegistry::setPaused(std::uint64_t number, bool paused) {
+    const auto it = rings_.find(number);
+    if (it == rings_.end()) return false;
+    it->second.paused = paused;
+    return true;
+}
+
 // Same rule as AssetLedger::setPayee: the last change in a block counts.
 bool RingRegistry::setPayee(std::uint64_t number, std::uint64_t height, const Address& payee, std::string& error) {
     const auto it = rings_.find(number);
@@ -173,6 +180,17 @@ std::vector<Bytes> RingRegistry::leaves() const {
     std::vector<Bytes> out;
     for (const auto& [n, r] : rings_) out.push_back(encodeEntry(r));
     for (const auto& [k, c] : commits_) out.push_back(encodeCommit(c));
+    return out;
+}
+
+std::vector<Bytes> extensionLeaves(const RingRegistry& registry, const Hash256& batch_hash) {
+    std::vector<Bytes> out = registry.leaves();
+    if (batch_hash != Hash256{}) {
+        Writer w;
+        w.text("primechain-next/extension-ring-batch");
+        w.hash(batch_hash);
+        out.push_back(w.data());
+    }
     return out;
 }
 

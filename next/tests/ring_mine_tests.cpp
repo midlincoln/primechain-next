@@ -342,10 +342,12 @@ void refusedWork(Engine& e, const RingWork& w, const std::string& expect, const 
     require(error.find(expect) != std::string::npos, what + ": expected '" + expect + "', got '" + error + "'");
 }
 
+// B3.6: the ring records, the open commits, then the hash of the block's ring batch (if any).
 Hash256 extensionRootOf(const Engine& e, const Block& block) {
-    std::vector<Bytes> leaves = e.rings().leaves();
-    for (const auto& r : block.ring_reveals) leaves.push_back(encode(r));
-    return merkleRoot(leaves);
+    Hash256 batch{};
+    for (const auto& b : e.ringBatches())
+        if (b.open_height == block.header.height) batch = ringBatchHash(b);
+    return merkleRoot(extensionLeaves(e.rings(), batch));
 }
 
 // The value of a single hand-made group (to test refusals beyond what the proposer would build).
@@ -817,10 +819,21 @@ void runSchedule(Engine& e, const Vectors& vec, IssuanceRun& run, std::uint64_t 
                                           !e.hasKey(m.address)));
             require(e.submitRingWork(run.queued.back(), error), "work at " + std::to_string(h) + ": " + error);
         }
+        // B3.6: the reveals ride in the block's ring batch, so they are queued before it is built.
+        for (const auto& r : vec.rings) {
+            if (r.commit + 1 == h) {
+                std::uint64_t index = 0;
+                for (const auto& o : vec.rings)
+                    if (o.commit == r.commit && o.k < r.k) ++index;
+                require(e.submitRingReveal(makeReveal(r.commit, index, salt(static_cast<std::uint8_t>(r.k)), certificate(vec, r.d)), error),
+                        "reveal: " + error);
+            }
+        }
         const auto t0 = std::chrono::steady_clock::now();
         const auto v = e.buildRingBatch();
         if (accepts[h].empty()) {
-            require(!v, "no batch at " + std::to_string(h));
+            require(!v || v->batch.blocks.empty(), "no ring blocks at " + std::to_string(h));
+            if (v) require(e.checkRingBatch(*v, error) && e.applyDecidedRingBatch(*v, error), "reveals at " + std::to_string(h) + ": " + error);
         } else {
             require(v.has_value(), "a batch at " + std::to_string(h));
             std::vector<std::string> got, want;
@@ -848,13 +861,6 @@ void runSchedule(Engine& e, const Vectors& vec, IssuanceRun& run, std::uint64_t 
                 const Miner& m = run.miners.at(r.who);
                 const Bytes s = salt(static_cast<std::uint8_t>(r.k));
                 require(e.submitRingCommit(makeCommit(e, m, s, certificate(vec, r.d), Integer(r.asset)), error), "commit: " + error);
-            }
-            if (r.commit + 1 == h) {
-                std::uint64_t index = 0;
-                for (const auto& o : vec.rings)
-                    if (o.commit == r.commit && o.k < r.k) ++index;
-                require(e.submitRingReveal(makeReveal(r.commit, index, salt(static_cast<std::uint8_t>(r.k)), certificate(vec, r.d)), error),
-                        "reveal: " + error);
             }
         }
         const auto& [ranger, finder] = vec.blocks.at(h);

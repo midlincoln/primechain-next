@@ -127,7 +127,15 @@ struct ValidatorRecord {
 // A3-2: governance. A proposal is position-independent: it names its content, the heights at
 // which it takes effect and expires, a sequence number and the validator set that votes on it,
 // but nothing about the chain tip, so votes stay valid while the chain moves.
-enum class GovernanceKind : std::uint8_t { ParamChange = 1, ValidatorAdd = 2, ValidatorRemove = 3 };
+// B3.6 (R2): RingPause pauses or unpauses one ring after the notice; EmergencyPause pauses one ring
+// (ring >= 1) or all rings (ring = 0) from the block after the one that completes the quorum.
+enum class GovernanceKind : std::uint8_t {
+    ParamChange = 1,
+    ValidatorAdd = 2,
+    ValidatorRemove = 3,
+    RingPause = 4,
+    EmergencyPause = 5
+};
 
 // D20: one parameter changed from `old_value` (must be the value in force) to `new_value`.
 struct ParameterChange {
@@ -143,6 +151,9 @@ struct GovernanceProposal {
     std::vector<ParameterChange> changes;  // ParamChange: increasing parameter ids
     ValidatorRecord validator;           // ValidatorAdd (binding signed by both keys, D10)
     Hash256 remove_key_hash{};           // ValidatorRemove: sha3 of the consensus key
+    std::uint64_t ring{0};               // RingPause (>= 1); EmergencyPause (0 = all rings)
+    bool pause{true};                    // RingPause: pause (true) or unpause (false)
+    Hash256 evidence{};                  // EmergencyPause: hash of the fault report (nonzero), on chain
     std::uint64_t effective_height{0};
     std::uint64_t expiry_height{0};      // votes are accepted only in blocks up to this height
     std::uint64_t sequence{0};
@@ -181,9 +192,8 @@ struct RingCommit {
     Bytes signature;
 };
 
-// RING_REVEAL (ring batch; carried by the main block until ring batches exist, B3.6). No
-// signature: only the discoverer knows the salt. commit_index is the commit's position in the
-// ring_commits list of block commit_height.
+// RING_REVEAL (carried by a ring batch, B3.6). No signature: only the discoverer knows the salt.
+// commit_index is the commit's position in the ring_commits list of block commit_height.
 struct RingReveal {
     std::uint64_t version{kVersion1};
     std::uint64_t commit_height{0};
@@ -192,6 +202,7 @@ struct RingReveal {
     std::uint64_t certificate_type{1};    // 1 = quadratic (R4)
     std::uint64_t certificate_version{kVersion1};
     Bytes certificate;                    // encode(QuadCertificate) for type 1
+    bool operator==(const RingReveal&) const = default;
 };
 
 // RING_PAYEE (main-block transaction): the current payee of a ring names the next one (R6).
@@ -234,10 +245,9 @@ struct Block {
     std::vector<GovernanceTx> governance;  // A3-2: votes and ready messages, after the transfers
     std::optional<AcceptedPrime> prime;  // absent only for the genesis seed blocks
     // B3.4. Order of application: transfers, ring commits, ring payees, governance, then the
-    // ring step (expiry, reveals, openings). Reveals move to ring batches in B3.6.
+    // ring step (expiry, openings). Reveals are in ring batches (B3.6), applied before the block.
     std::vector<RingCommit> ring_commits;
     std::vector<RingPayee> ring_payees;
-    std::vector<RingReveal> ring_reveals;
 };
 
 Bytes rangeSigningPayload(const RangeSubmission& range);
